@@ -9,6 +9,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
@@ -24,6 +25,13 @@ data class AlarmState(
     val notificationsAvailable: Boolean,
     val message: String,
 )
+
+/** Notification controls whose state validation is performed by [IslandRuntime]. */
+internal enum class TimerNotificationAction {
+    PAUSE,
+    RESUME,
+    CLEAR,
+}
 
 /**
  * Schedules app-owned timer completion broadcasts and maintains one notification per timer.
@@ -270,6 +278,7 @@ object TimerAlarmScheduler {
             .setChronometerCountDown(true)
             .setOngoing(true)
             .setAutoCancel(false)
+            .addAction(notificationAction(context, timer, "Pause", TimerNotificationAction.PAUSE, TimerState.RUNNING))
             .build()
         return notify(manager, timer.createdOrder, notification)
     }
@@ -286,6 +295,8 @@ object TimerAlarmScheduler {
             .setUsesChronometer(false)
             .setOngoing(false)
             .setAutoCancel(true)
+            .addAction(notificationAction(context, timer, "Resume", TimerNotificationAction.RESUME, TimerState.PAUSED))
+            .addAction(notificationAction(context, timer, "Clear", TimerNotificationAction.CLEAR, TimerState.PAUSED))
             .build()
         return notify(manager, timer.createdOrder, notification)
     }
@@ -302,6 +313,7 @@ object TimerAlarmScheduler {
             .setUsesChronometer(false)
             .setOngoing(false)
             .setAutoCancel(true)
+            .addAction(notificationAction(context, timer, "Clear", TimerNotificationAction.CLEAR, TimerState.FINISHED))
             .build()
         return notify(manager, timer.createdOrder, notification)
     }
@@ -324,6 +336,43 @@ object TimerAlarmScheduler {
         return PendingIntent.getActivity(
             context,
             notificationId(timer.createdOrder),
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
+    private fun notificationAction(
+        context: Context,
+        timer: TimerSnapshot,
+        title: String,
+        action: TimerNotificationAction,
+        expectedState: TimerState,
+    ): Notification.Action = Notification.Action.Builder(
+        Icon.createWithResource(context, R.drawable.ic_island),
+        title,
+        notificationActionIntent(context, timer, action, expectedState),
+    ).build()
+
+    private fun notificationActionIntent(
+        context: Context,
+        timer: TimerSnapshot,
+        action: TimerNotificationAction,
+        expectedState: TimerState,
+    ): PendingIntent {
+        val data = Uri.Builder()
+            .scheme("dynamicisland")
+            .authority("timer-action")
+            .appendPath(timer.id)
+            .appendPath(action.name)
+            .appendPath(expectedState.name)
+            .build()
+        val intent = Intent(context, TimerAlarmReceiver::class.java)
+            .setAction(ACTION_TIMER_NOTIFICATION)
+            .setData(data)
+        val requestCode = timer.id.hashCode() * 31 + action.ordinal * 7 + expectedState.ordinal
+        return PendingIntent.getBroadcast(
+            context,
+            requestCode,
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -404,7 +453,8 @@ object TimerAlarmScheduler {
             .commit()
     }
 
-    private const val ACTION_TIMER_ALARM = "dev.luinbytes.dynamicisland.action.TIMER_ALARM"
+    internal const val ACTION_TIMER_ALARM = "dev.luinbytes.dynamicisland.action.TIMER_ALARM"
+    internal const val ACTION_TIMER_NOTIFICATION = "dev.luinbytes.dynamicisland.action.TIMER_NOTIFICATION"
     private const val PREFERENCES_NAME = "timer_alarm_scheduler_v1"
     private const val KEY_RECORD = "record"
     private const val CHANNEL_ID = "app_owned_timers"

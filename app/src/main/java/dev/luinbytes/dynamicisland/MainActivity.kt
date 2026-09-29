@@ -27,20 +27,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import java.util.Locale
 
@@ -90,7 +94,7 @@ class MainActivity : ComponentActivity() {
                             IslandRuntime.changeOverlayEnabled(false)
                             message = null
                         },
-                        onStartTimer = { IslandRuntime.startTimer(it) },
+                        onStartTimer = { duration, label -> IslandRuntime.startTimer(duration, label) },
                         onPauseTimer = { IslandRuntime.pauseTimer(it) },
                         onResumeTimer = { IslandRuntime.resumeTimer(it) },
                         onCancelTimer = {
@@ -223,7 +227,7 @@ private fun PrototypeScreen(
     onOpenOverlaySettings: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
-    onStartTimer: (Long) -> Unit,
+    onStartTimer: (Long, String) -> Unit,
     onPauseTimer: (String) -> Unit,
     onResumeTimer: (String) -> Unit,
     onCancelTimer: (String) -> Unit,
@@ -236,6 +240,8 @@ private fun PrototypeScreen(
     onAllowMediaPackage: (String, Boolean) -> Unit,
     onMediaAction: (MediaSession.Token, MediaTransportAction) -> Unit,
 ) {
+    var customMinutes by rememberSaveable { mutableStateOf("") }
+    var customLabel by rememberSaveable { mutableStateOf("") }
     Column(
         modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
             .verticalScroll(rememberScrollState()).padding(24.dp),
@@ -364,10 +370,37 @@ private fun PrototypeScreen(
                         Text(alarmState.message, style = MaterialTheme.typography.bodySmall)
                     }
                 }
+                OutlinedTextField(
+                    value = customLabel,
+                    onValueChange = { customLabel = it.take(48) },
+                    label = { Text("Timer name (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { onStartTimer(60_000L) }) { Text("1 min") }
-                    OutlinedButton(onClick = { onStartTimer(300_000L) }) { Text("5 min") }
-                    OutlinedButton(onClick = { onStartTimer(600_000L) }) { Text("10 min") }
+                    OutlinedButton(onClick = { onStartTimer(60_000L, customLabel) }) { Text("1 min") }
+                    OutlinedButton(onClick = { onStartTimer(300_000L, customLabel) }) { Text("5 min") }
+                    OutlinedButton(onClick = { onStartTimer(600_000L, customLabel) }) { Text("10 min") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = customMinutes,
+                        onValueChange = { customMinutes = it.filter(Char::isDigit).take(4) },
+                        label = { Text("Minutes (1–1440)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                    )
+                    val minutes = customMinutes.toLongOrNull()
+                    Button(
+                        onClick = {
+                            if (minutes != null) {
+                                onStartTimer(minutes * 60_000L, customLabel)
+                                customMinutes = ""
+                            }
+                        },
+                        enabled = minutes != null && minutes in 1L..1440L,
+                    ) { Text("Start") }
                 }
                 if (timers.isEmpty()) Text("No timers")
                 for (timer in timers) {
@@ -425,5 +458,9 @@ private fun PrototypeScreen(
 
 private fun formatTimer(millis: Long): String {
     val seconds = (millis + 999L) / 1_000L
-    return String.format(Locale.US, "%02d:%02d", seconds / 60L, seconds % 60L)
+    return if (seconds >= 3_600L) {
+        String.format(Locale.US, "%d:%02d:%02d", seconds / 3_600L, (seconds % 3_600L) / 60L, seconds % 60L)
+    } else {
+        String.format(Locale.US, "%02d:%02d", seconds / 60L, seconds % 60L)
+    }
 }

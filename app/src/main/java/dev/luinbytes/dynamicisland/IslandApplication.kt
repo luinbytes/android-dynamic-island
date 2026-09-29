@@ -94,7 +94,8 @@ internal object IslandRuntime {
         deviceSignals.start()
     }
 
-    fun startTimer(durationMillis: Long): String = timersRepository.start(durationMillis)
+    fun startTimer(durationMillis: Long, label: String = "Timer"): String =
+        timersRepository.start(durationMillis, label)
 
     fun pauseTimer(id: String): Boolean = timersRepository.pause(id)
 
@@ -111,6 +112,27 @@ internal object IslandRuntime {
         alarmState = TimerAlarmScheduler.reconcile(context, snapshots)
         snapshots.firstOrNull { it.id == timerId && it.state == TimerState.FINISHED }
             ?.let { TimerAlarmScheduler.postCompletion(context, it) }
+    }
+
+    fun onTimerNotificationAction(
+        context: Context,
+        timerId: String,
+        action: TimerNotificationAction,
+        expectedState: TimerState,
+    ): Boolean {
+        val current = timersRepository.snapshot().firstOrNull { it.id == timerId }
+        if (current?.state != expectedState) {
+            alarmState = TimerAlarmScheduler.reconcile(context, timersRepository.snapshot())
+            return false
+        }
+        return when (action) {
+            TimerNotificationAction.PAUSE ->
+                expectedState == TimerState.RUNNING && timersRepository.pause(timerId)
+            TimerNotificationAction.RESUME ->
+                expectedState == TimerState.PAUSED && timersRepository.resume(timerId)
+            TimerNotificationAction.CLEAR ->
+                expectedState in setOf(TimerState.PAUSED, TimerState.FINISHED) && timersRepository.cancel(timerId)
+        }
     }
 
     fun changeOverlayEnabled(enabled: Boolean): String? {
