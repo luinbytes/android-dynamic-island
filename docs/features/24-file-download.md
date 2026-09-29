@@ -1,0 +1,19 @@
+# Browser file-download activity
+
+[Specification index](../../REFERENCE_SPEC.md) · [capture matrix](../reference/02-state-capture.md) · [Android events](../android/06-android-events.md)
+
+Apple's iOS 18 release notes introduced a **File Download Live Activity** that shows progress in the Dynamic Island and on the Home Screen. The iOS 27 Safari settings guide still documents choosing a download destination, but it does not itself confirm that the same Island presentation survives unchanged on iPhone 18 Pro Max. Treat R10i as a current-version verification case: do not copy an iOS 18 screenshot or invent iOS 27 geometry. [Apple iOS 18 updates](https://support.apple.com/en-us/121161), [iOS 27 Safari settings](https://support.apple.com/guide/iphone/customize-your-safari-settings-iphb3100d149/27/ios/27)
+
+## R10i native capture
+
+Download a harmless, locally hosted test file large enough for a visible progress interval. Record the source URL only if it contains no private token. Repeat one and two simultaneous downloads, cancel one, fail one intentionally, complete one, leave Safari for Home/another app and return, then lock/unlock. Record whether the Island actually appears on the selected iOS 27 build; if present, measure compact/minimal/expanded content, bytes or percentage, icon, tap destination, controls, pause/failure state, exit and priority relative to another Live Activity. Observe the Home/Lock Screen surfaces separately. If iOS 27 no longer presents it, record an **observed absence**, not a visual target imported from older software.
+
+## Android source and owner
+
+| Source | Available contract | Required proof |
+| --- | --- | --- |
+| App-owned download | Android `DownloadManager` can enqueue a request and query its status, downloaded-byte and total-byte columns; it reports pending, running, paused, successful and failed states. [DownloadManager](https://developer.android.com/reference/android/app/DownloadManager) | Persist the returned download ID, query only the known task, check unknown/zero total size before drawing a percentage, and remove its card on confirmed completion/cancellation. A download notification and task record for the same ID must not create two Island sources. |
+| Third-party browser download | The browser may publish a notification with progress and a tap/action token. A notification listener observes only fields actually posted; the public `DownloadManager` client contract does not by itself establish authority to enumerate another browser's private transfer state. [NotificationListenerService](https://developer.android.com/reference/android/service/notification/NotificationListenerService), [DownloadManager](https://developer.android.com/reference/android/app/DownloadManager) | Test a named browser/version and exact notification key. Confirm progress semantics, destination, cancellation, failure and removal through real runs; do not infer a filename, total size or stop action from a generic download icon. |
+| Target-specific SystemUI | Native download notification/chip, shade and status-bar owners for the selected OS build. | Reconcile one real transfer with one native chip/card and one replica source. Preserve shade access, lock redaction and the publisher's actual action owner. [AOSP SystemUI](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/packages/SystemUI/README.md) |
+
+The Android admission decision follows the [notification admission contract](../android/20-notification-admission.md): an ordinary one-off “download complete” notification is not an active transfer. The Apple and Android verdicts remain `unverified` until the selected iPhone confirms current R10i behavior and the selected Android browser or app-owned task is filmed. Record iPhone/Android publisher version, download ID or notification key, exact bytes/total source, visible progress, destination, user action, final file/result and teardown as distinct facts.

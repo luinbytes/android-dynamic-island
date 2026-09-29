@@ -1,0 +1,18 @@
+# Local Capture recording indicator
+
+[Specification index](../../REFERENCE_SPEC.md) · [screen recording and privacy](../verification/08-platform-proof-gates.md) · [Android surface ownership](../android/15-android-surface-ownership.md)
+
+Apple's iOS 27 guide says Local Capture records the user's side of a videoconference on the iPhone and displays a **recording icon in the Dynamic Island** during capture. By default it records audio and video; it can be set to audio only, and it records only audio if another app already uses the camera. That is source-backed evidence for an Island recording state, but Apple does not publish its iPhone 18 Pro Max contour, icon dimensions, tap result, stop action or coexistence priority. It is distinct from the red screen-recording stop flow in R16 and from a camera/microphone privacy indicator in R21. [Apple Local Capture guide](https://support.apple.com/guide/iphone/improve-audio-and-record-video-calls-iph8dc8a5c3c/27/ios/27), [Apple screen recording guide](https://support.apple.com/guide/iphone/take-a-screen-recording-iph52f6e1987/27/ios/27)
+
+## R16a iPhone capture
+
+Open a videoconference app and start Local Capture through Control Center. Run separate audio-plus-video, audio-only and camera-busy cases. Film the first Island frame, settled icon, tap and hold outcomes, any expanded controls, stop path, privacy indicators, save/failure result and return state. Repeat while a Live Activity or screen recording is already present, in landscape, after locking and when leaving the conferencing app. Record whether each attempt is allowed and whether a saved file actually exists; avoid retaining personal call media in the reference package. The guide proves **icon presence during capture**, not all of these outcomes.
+
+## Android route
+
+| Candidate | What it can know | Acceptance boundary |
+| --- | --- | --- |
+| Ordinary APK | It can know a capture session it owns or an explicitly cooperating publisher's session. Another app's camera/microphone privacy indicator is not a contract for a Local Capture file, audio-only mode, recording duration or stop action. | Do not relabel a mic/camera dot or the app's own `MediaProjection` screen session as another app's Local Capture. Use a publisher's real notification/action only if that named app/version exposes the recording task. [Android notification listener](https://developer.android.com/reference/android/service/notification/NotificationListenerService), [MediaProjectionManager](https://developer.android.com/reference/android/media/projection/MediaProjectionManager) |
+| Target-specific SystemUI | It owns the Android privacy indicators and may own a device recording surface; inspect the exact build's capture implementation and event path. | Preserve the true camera/mic usage indicator and its app-usage details. Render a separate task icon or stop affordance only when a genuine capture owner supplies that state/action. AOSP privacy indicators report sensitive-resource use, not necessarily a saved recording. [AOSP privacy indicators](https://source.android.com/docs/core/permissions/privacy-indicators) |
+
+The Android phone may have no built-in equivalent to Apple's Local Capture. If the exact OS and publisher expose no such recording session, mark **functional parity unsupported for that route** while retaining a separate visual verdict for a tested, app-owned capture. R16a overall remains `unverified` until the iPhone capture and selected Android source/runtime are paired. Record `source`, `capture mode`, `recording active`, `privacy indicator`, `Island icon`, `tap/stop owner`, `saved result` and `teardown` independently.

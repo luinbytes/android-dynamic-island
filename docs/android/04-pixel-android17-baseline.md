@@ -1,0 +1,27 @@
+# Pixel-first Android 17 baseline
+
+[Specification index](../../REFERENCE_SPEC.md) · [device qualification](18-device-qualification.md) · [surface ownership](15-android-surface-ownership.md)
+
+As of 2026-09-29, target the latest **stable Android 17** release for the primary Android comparison. Treat quarterly platform beta builds as separate research profiles, not interchangeable with the stable reference. Google lists Android 17 as its current platform and Pixel 11 Pro XL as launched with Android 17. [Android 17 overview](https://developer.android.com/about/versions/17), [Pixel 11 Pro XL specifications](https://store.google.com/product/pixel_11_pro_specs?hl=en-US).
+
+## Device profiles
+
+| Profile | Purpose | Status |
+| --- | --- | --- |
+| **Pixel 11 Pro XL, stock stable Android 17** | Provisional primary Android reference for the iPhone 18 Pro Max comparison. Google's listed 6.8-inch, 1344 × 2992 display makes it a sensible large-phone candidate; this is a screen-class choice, **not** evidence that its punch hole, status bar or Island contour matches the iPhone. | Candidate only; no physical unit or exact build captured. [Google specifications](https://store.google.com/product/pixel_11_pro_specs?hl=en-US) |
+| Pixel 11 Pro and Pixel 11, stock stable Android 17 | Secondary size and layout profiles after the primary build is qualified. Record each model, cutout, display settings and OS build separately; do not inherit a Pro XL parity verdict. | Unmeasured. [Pixel 11 lineup](https://blog.google/products-and-platforms/devices/pixel/new-pixel-devices-2026/) |
+| Pixel 11 Pro Fold | Separate folded and unfolded investigation; its form factor needs independent geometry, system-surface and input records. | Outside the primary phone parity verdict. [Pixel 11 lineup](https://blog.google/products-and-platforms/devices/pixel/new-pixel-devices-2026/) |
+
+Google's general [Get Android 17](https://developer.android.com/about/versions/17/get) OTA list currently ends at Pixel 10a even though Google's Pixel 11 Pro XL product page says it launched with Android 17. Use the product page to identify the shipped OS, then read the **installed** OS/build on the physical unit. Do not infer a Pixel 11 OTA image, build number, or SystemUI source route from that older list.
+
+## Freeze the exact Pixel configuration
+
+Before tuning or scoring, record the device model and variant, Android release/API level, full build fingerprint, security patch, Pixel Drop/QPR channel, display resolution and size scaling, density, font scaling, refresh setting, navigation mode, region/carrier, default dialer, Google app/SystemUI-relevant package versions, notification settings and work-profile state. Capture the physical camera aperture and active pixels externally as well as `DisplayCutout`, status-bar and gesture insets. Store these with the [evidence manifest](../verification/18-evidence-manifest.md). Repeat the affected measurements when a Pixel Drop or QPR changes SystemUI or publisher behavior.
+
+Pixel-specific native coexistence checks must include the stock status bar and Live Update chip, media player and output switcher, camera/microphone/location privacy indicators, notification shade, keyguard and always-on display, Google Phone call surfaces, biometric prompt, system screen recording, fullscreen/immersive transitions and top-edge gestures. Check supported Google Phone features by region and dialer version; do not assume a Pixel feature exposes its private state or actions to an ordinary APK. Apply the [surface ownership contract](15-android-surface-ownership.md), [event adapters](06-android-events.md) and [78-state map](../verification/10-state-to-android-map.md).
+
+## Implementation route on a stock Pixel
+
+An installable APK can qualify only the overlay, public API, enabled-listener and cooperating-publisher route shown by its actual permissions and runtime behavior. Android 17's install-source Restricted Settings gate may affect a locally installed overlay/listener APK; verify it on the chosen Pixel. Native status-bar chips, privacy indicators, shade, lock screen and AOD remain system-owned. An OEM or custom SystemUI experiment is a **separate** build-specific route. Google's AOSP instructions require device-specific proprietary libraries on physical hardware; a downloadable factory image alone does not establish editable Pixel SystemUI, signing or safe recovery. Inspect the exact source/binaries/boot path before claiming that route. Any bootloader unlock or flashing requires a recorded backup and separate point-of-action authorization because it can erase user data. [Android 17 Restricted Settings](https://source.android.com/docs/compatibility/17/android-17-cdd), [Android overlay window](https://developer.android.com/reference/android/view/WindowManager.LayoutParams#TYPE_APPLICATION_OVERLAY), [AOSP device binaries](https://source.android.com/docs/setup/download), [verified boot device state](https://source.android.com/docs/security/features/verifiedboot/device-state).
+
+The primary Android profile is **selected for planning only**. It becomes the measured target after a real Pixel 11 Pro XL and exact stable build are recorded. Every visual, motion, interaction, source/action and system-coexistence verdict stays `unverified` until paired native iPhone and Pixel evidence satisfies the [comparison protocol](../verification/12-comparison-protocol.md).

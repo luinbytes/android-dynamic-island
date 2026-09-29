@@ -1,0 +1,17 @@
+# MLB live-game activity
+
+[Specification index](../../REFERENCE_SPEC.md) · [R10u capture](../reference/02b-system-activities-capture.md) · [Android source map](../verification/10-state-to-android-map.md)
+
+## Documented iPhone behavior
+
+Apple's iOS 27 Live Activities session demonstrates the **MLB app** following a favorite team's live game. The Live Activity shows score, inning and key game updates on the Lock Screen and in the Dynamic Island while using the Home Screen or other apps. The session also shows that an alerting update or a long press can expand a Live Activity; it does not publish MLB's exact iPhone 18 Pro Max contours, fields in each compact/minimal view, timing, control set, start policy or end policy. Record those on the target build. This named MLB source is distinct from Apple Sports and Apple TV even when the game is the same. [Apple WWDC26 Live Activities essentials](https://developer.apple.com/videos/play/wwdc2026/223/).
+
+## Android signal and owner
+
+MLB's Android help documents game-related notifications, including game start/end, score changes, lead changes and pitching changes. These are **event alerts**, not documented proof of an ongoing, listener-visible game state, a system-promoted Live Update or an Unpin action. On the selected Android build, inspect the installed MLB app's real posted notifications, keys, grouping, fields, `contentIntent`, actions, lifetime and `FLAG_PROMOTED_ONGOING`. Do not parse an old score alert into a continuously current game or combine separate alert notifications into one activity without a publisher-confirmed game identity. Keep MLB audio/video `MediaSession` playback separate from the score source. [MLB Android FAQ](https://www.mlb.com/es/dodgers/apps/mlb-app/faq-android), [Android notification listener](https://developer.android.com/reference/android/service/notification/NotificationListenerService), [Android Live Updates](https://developer.android.com/develop/ui/views/notifications/live-update).
+
+An opt-in, app-owned game monitor may publish its **own** user-chosen ongoing task and real Unpin action under Android's Live Update rules. That is a different publisher, not evidence that the MLB Android app exposes equivalent state. The replica may show a named MLB card only for an actually observed, version-qualified source whose task identity and freshness are defensible. Otherwise retain MLB's native alerts and mark the cross-app continuous-game layer `unverified` or `unsupported` after inspection. [Android third-party adapter contract](../android/43-third-party-adapter-contract.md).
+
+## R10u capture and parity gate
+
+Follow a real available MLB game on iPhone, with the favorite team and Live Activities settings recorded. Capture pregame, first live frame, score/inning change, a key alert, delay, final and teardown; film compact, minimal under a competing activity, expanded, landscape, Lock Screen, taps and return destination. Record game and publisher IDs and test the same game alongside Apple Sports or Apple TV without merging their source identities. On Android, record the exact MLB package/version and notification settings, every actual posted alert or ongoing item, listener payload, chip/shade/lock presentation, tap result and end. If no usable ongoing MLB signal appears, record the negative trial and separately test an app-owned game monitor as a functional alternative. Overall visual and functional parity remain `unverified` until paired native captures exist.

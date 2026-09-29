@@ -1,0 +1,17 @@
+# Hiding and restoring a visible activity
+
+[Specification index](../../REFERENCE_SPEC.md) · [interaction contract](../design/13-interaction-contract.md) · [state machine](../design/14-state-machine.md)
+
+An [Apple Support video published in 2024](https://www.youtube.com/watch?v=srHDQ_lqLtE) says people can hide and open Live Activities in the Dynamic Island. Its description establishes a user-visible operation, but does not publish exact touch paths, how many sources it affects or the iPhone 18 Pro Max/iOS 27 result. Apple's [iOS 27 Island guide](https://support.apple.com/guide/iphone/view-live-activities-in-the-dynamic-island-iph28f50d10d/27/ios/27) documents cross-Island swipes for moving among up to three activities without specifying a hide operation. R5d therefore treats hide/restore as a **historically documented candidate to verify**, not as a hard-coded current gesture.
+
+## R5d capture
+
+Start one controlled activity, then two and three across separate publishers. With each composition, swipe left/right across and toward the Island from the visible shape, detached shape and empty gap; repeat with short and long content. For each gesture record down/move/up coordinates, first visual response, resulting visible IDs, selected ID, native ActivityKit IDs/states, Lock Screen visibility, and whether another gesture, update, alert, app foreground change or lock/unlock restores the item. End a hidden candidate source and confirm the hidden appearance does not persist as a live task. Separate a user-hidden presentation from an ended activity, a Lock Screen dismissal, an overflowed fourth source and a source concealed because its publisher is foreground.
+
+Film the real iOS 27 reference externally and log ActivityKit state in the fixture. A black idle-looking Island after a swipe alone cannot prove the activity ended. If no hide result can be reproduced on the target build, record the negative trials and keep the current iOS guide's move-between-activities rule as the observed behavior.
+
+## Android implementation boundary
+
+Represent a verified hide as **presentation state bound to a source identity**, leaving its real notification, media session or task lifecycle unchanged. Store the reason and timestamp; invalidate any pending action on the hidden shape, but continue accepting genuine source updates and removal. Define the restoration trigger only from iOS 27 capture. Do not cancel another publisher's notification or media session merely to clear the replica; do not repost a user-dismissed Android Live Update. The native status chip and shade may remain visible because SystemUI owns them. An APK can hide its own bounded window while leaving the native chip intact, so system-level visual parity may remain approximate. A selected SystemUI implementation needs a measured policy for native chip, shade and accessibility focus after hide. [Android notification listener](https://developer.android.com/reference/android/service/notification/NotificationListenerService), [native chip ownership](../android/15-android-surface-ownership.md).
+
+Test hide during a source update, alert, swipe to another source, lock, listener disconnect and notification removal. The renderer's apparent result and the actual source/system result are separate acceptance fields. **Verdict:** iOS 27 behavior and paired Android result remain `unverified` until R5d captures; the 2024 video alone is not a 1:1 acceptance reference.

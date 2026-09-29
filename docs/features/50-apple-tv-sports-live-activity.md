@@ -1,0 +1,15 @@
+# Apple TV sports Live Activity
+
+[Specification index](../../REFERENCE_SPEC.md) · [R10r capture](../reference/02b-system-activities-capture.md) · [Apple Sports investigation](47-apple-sports-live-game.md)
+
+Apple's iOS 27 Lock Screen guide names **live sports updates from the Apple TV app** as a Live Activity example. An iOS 16 release note explicitly placed Apple TV app live scores in the Dynamic Island on iPhone 14 Pro models. Neither source establishes whether an Apple TV app sports activity still appears in the **iPhone 18 Pro Max/iOS 27 Island**, nor whether an Apple Sports follow action now owns the same game. Keep the publisher and game identities observable before reusing the Apple Sports result. [iOS 27 Lock Screen guide](https://support.apple.com/guide/iphone/access-features-from-the-lock-screen-iphcd5c65ccf/27/ios/27), [iOS 16 release note](https://support.apple.com/en-us/101566).
+
+## R10r native capture
+
+Use a currently available live game offered through the Apple TV app. Record Apple TV and Apple Sports versions, region, subscriptions, followed-team settings, both apps' Live Activities permissions, and the game identifier. First follow/launch the game only from Apple TV, then only from Apple Sports, then with both paths enabled. Capture pregame, live score/play change, final and removal while unlocked, locked, in another app and alongside a second Island activity. For every run, record the publisher shown in settings/source logs, Lock Screen and Island **presence or absence**, compact/minimal/expanded fields if present, tap destination, alerts and whether both apps produce distinct or deduplicated cards. Do not treat an Apple TV video **Now Playing** session as a sports-score Live Activity.
+
+## Android route and verdict
+
+Apple provides an Apple TV app on Android with live match scores in its MLS view and team-follow controls. Those in-app features do not establish a posted Android ongoing notification, a Live Update, or listener-visible game fields. On the selected phone, inspect the actual Apple TV Android build's notifications, session IDs, actions, promoted flag, native chip and tap destination during the same game. Use only published fields for a noncooperating app. A separate cooperating sports publisher may issue a user-initiated Live Update with an Unpin action, but it is a separate source and must not impersonate Apple TV or Apple Sports. [Apple TV MLS guide](https://support.apple.com/guide/tvapp/watch-mls-atvbfc46cda2/1.0/web/1.0), [Apple TV team follow guide](https://support.apple.com/guide/tvapp/manage-favorite-teams-sports-scores-atvb30739feb/1.0/web/1.0), [Android Live Updates](https://developer.android.com/develop/ui/views/notifications/live-update).
+
+R10r remains `unverified` for Island presence and all paired parity layers until native and target-phone captures satisfy the [comparison protocol](../verification/12-comparison-protocol.md). A negative current-iOS Island result is a valid finding and must not create a replica card.
