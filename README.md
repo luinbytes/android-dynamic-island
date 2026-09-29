@@ -33,7 +33,7 @@ Keep active tasks in a small, expandable window near the top of your Android scr
 4. To show media, choose **Enable media**, grant Android notification access in Settings, then allow each observed media app in the dashboard. You can disable media access or stop the Island window from the app at any time.
 5. To show charging or flashlight status in the pill, turn on either activity in **Device signals**. These are off by default and disappear when the corresponding signal ends.
 
-Timer completion notifications are silent. The app does not play an alarm sound. Android can delay inexact alarms, and a force-stop prevents alarm delivery until the app is reopened. The Island window closes when the screen turns off or the device locks; Android may also remove an app-owned overlay when its process stops. While media access is enabled, Android blocks ordinary screenshots and screen capture of this app's dashboard; the media pill is protected separately. Ordinary notifications are not automatically turned into activities.
+Timer completion notifications are silent. The app does not play an alarm sound. If notifications are blocked when a timer finishes, its completion remains visible in the app but no old alert is sent after access returns. Android can delay inexact alarms, and a force-stop prevents alarm delivery until the app is reopened. The Island window closes when the screen turns off or the device locks; Android may also remove an app-owned overlay when its process stops. While media access is enabled, Android blocks ordinary screenshots and screen capture of this app's dashboard; the media pill is protected separately. Ordinary notifications are not automatically turned into activities.
 
 ## Current scope
 

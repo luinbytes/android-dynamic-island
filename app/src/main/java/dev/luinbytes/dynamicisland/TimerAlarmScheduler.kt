@@ -121,6 +121,11 @@ object TimerAlarmScheduler {
                     cancelAlarm(appContext, alarmManager, timer.id)
                     if (timer.createdOrder !in record.completionAttempts) {
                         cancelTimerNotification(notificationAccess.manager, timer.createdOrder)
+                        if (!attemptCompletion(appContext, timer, notificationAccess, record) &&
+                            notificationAccess.available
+                        ) {
+                            notificationsFailed = true
+                        }
                     } else {
                         val manager = notificationAccess.manager
                         if (
@@ -165,8 +170,8 @@ object TimerAlarmScheduler {
     }
 
     /**
-     * Posts a truthful finished notification once per persisted timer identity. Safe for both the
-     * receiver and the in-process timer-state transition to call; duplicate callers are deduped.
+     * Posts a truthful finished notification once per persisted timer identity. Unavailable access
+     * suppresses that expiry, while a transient posting failure remains eligible for reconciliation.
      */
     internal fun postCompletion(context: Context, timer: TimerSnapshot): Boolean = synchronized(lock) {
         if (timer.state != TimerState.FINISHED || timer.createdOrder <= 0L) return@synchronized false
@@ -175,15 +180,26 @@ object TimerAlarmScheduler {
         if (timer.createdOrder in record.completionAttempts) return@synchronized false
 
         val access = notificationAccess(appContext)
-        record.completionAttempts.add(timer.createdOrder)
         record.knownOrders[timer.id] = timer.createdOrder
-        val posted = if (access.available && access.manager != null) {
-            postCompletionNotification(appContext, access.manager, timer)
-        } else {
-            false
-        }
+        val posted = attemptCompletion(appContext, timer, access, record)
         writeRecord(appContext, record)
         posted
+    }
+
+    private fun attemptCompletion(
+        context: Context,
+        timer: TimerSnapshot,
+        access: NotificationAccess,
+        record: SchedulerRecord,
+    ): Boolean {
+        if (!access.available || access.manager == null) {
+            // Do not surface an old completion when the user enables alerts much later.
+            record.completionAttempts.add(timer.createdOrder)
+            return false
+        }
+        val posted = postCompletionNotification(context, access.manager, timer)
+        if (posted) record.completionAttempts.add(timer.createdOrder)
+        return posted
     }
 
     internal fun cancelAlarm(context: Context, timerId: String) {
