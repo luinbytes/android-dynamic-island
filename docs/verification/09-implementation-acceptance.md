@@ -22,6 +22,6 @@ For each R-state, follow the [paired comparison protocol](12-comparison-protocol
 ## Current gaps
 
 - No iPhone 18 Pro Max/iOS 27 native capture is available here. Apple's launch video establishes an example of the two- and three-activity composition, but does not publish the redesigned Island's native contour, widths, or motion curves.
-- A [stock Pixel 11 Pro XL on stable Android 17](../android/04-pixel-android17-baseline.md) is the provisional primary Android profile; no physical unit or exact build is selected. `adb devices -l` showed no connected device on 2026-09-28. Device-specific overlay placement and runtime behavior remain unverified.
+- A [stock Pixel 11 Pro XL on stable Android 17](../android/04-pixel-android17-baseline.md) is the provisional primary Android profile; no physical Pixel unit or exact build is selected. A connected Samsung SM-S906E running Android 16 was verified through ADB on 2026-09-29 as a separate prototype test bed. Pixel-specific overlay placement and runtime behavior remain unverified.
 - No target Android OS build, editable SystemUI source, signing path or safe recovery route has been selected. A native SystemUI integration is therefore an architecture path to validate, not an implemented or confirmed option on a particular phone.
 - This workspace was empty and had no Git repository when research began. No app, build, CI, or runtime proof exists yet.

@@ -2,7 +2,7 @@
 
 [Specification index](../../REFERENCE_SPEC.md) · [architecture](05-android-architecture.md) · [comparison protocol](../verification/12-comparison-protocol.md)
 
-This gate applies to **one named Android phone and exact OS build**. The [provisional primary profile](04-pixel-android17-baseline.md) is a stock Pixel 11 Pro XL on stable Android 17; no physical unit or exact build has been selected, and `adb devices -l` showed no connected phone on 2026-09-28. This gate determines whether that target can support a physically convincing Island and which implementation route can be tested. It is a prerequisite to paired tuning, not a 1:1 verdict.
+This gate applies to **one named Android phone and exact OS build**. The [provisional primary profile](04-pixel-android17-baseline.md) is a stock Pixel 11 Pro XL on stable Android 17; no physical Pixel target or exact build has been selected. A Samsung SM-S906E running Android 16 was connected by USB and reachable through ADB on 2026-09-29, so it is available for separate prototype checks but cannot qualify the Pixel profile. This gate determines whether that target can support a physically convincing Island and which implementation route can be tested. It is a prerequisite to paired tuning, not a 1:1 verdict.
 
 ## Evidence to collect first
 
