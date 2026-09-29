@@ -1,0 +1,25 @@
+# Samsung Android 16 prototype evidence
+
+This record covers the public-API APK prototype on Samsung SM-S906E (`RZCT81C29ND`), Android API 36, build `S906EXXSDGZB6`, on 2026-09-29. It does not qualify the provisional Pixel 11 Pro XL/Android 17 target or compare against an iPhone 18 Pro Max/iOS 27 native capture. Screenshots were inspected locally; raw shade captures are not stored in this repository because they contain unrelated personal notifications.
+
+## Build and installation
+
+- `:app:assembleDebug :app:lintDebug` passed with JDK 17, SDK 36 and one Gradle worker. Lint had no errors; remaining warnings concern intentional durable `SharedPreferences.commit`, tooling-version availability and KTX suggestions.
+- The resulting debug APK installed with `adb -s RZCT81C29ND install -r` and launched on the physical phone.
+
+## Observed behavior
+
+| Area | Physical result | Limit |
+| --- | --- | --- |
+| Overlay | A bounded pill rendered in portrait and landscape after a temporary display-over-other-apps grant. Tap expanded/collapsed; long press stopped it. Access was revoked after the first pass. | This is an application overlay below Android's system-owned status/lock surfaces. Native contour and motion are unmeasured. |
+| Screen sleep | With a timer pill visible, a real `KEYCODE_SLEEP` transition removed the app's `APPLICATION_OVERLAY` window from `dumpsys window`; waking restored it on this device. A display-only `cmd display power-off` did not send the same transition and left the window attached. | The phone returned to the unlocked app on wake, so a secured keyguard and always-on-display privacy transition were not proven. |
+| Multiple timers | Two independent countdowns ticked; their state restored after an app force-stop/relaunch. Four sources were retained: three visible and one queued. Selecting the queued fourth source and clearing it promoted the prior queued source. | The arbitration policy is a labeled Android approximation, pending iPhone reference capture. |
+| Media listener | A temporary notification-listener grant connected the media feed; revocation changed the UI to unavailable and cleared active media content. | No publisher session or command response has been accepted on this phone. No ordinary notification is admitted as an Island activity. |
+| Media capture protection | Enabling media without granting listener access caused a fresh Samsung `screencap` of the app dashboard to render black while status/navigation bars remained visible. Disabling media made the same dashboard visible to capture again. | No active third-party media title or screen-sharing session was available in this pass. The separate media overlay `FLAG_SECURE` path remains source-verified rather than physically captured. |
+| Exact timer completion | With temporary `POST_NOTIFICATIONS` and exact-alarm access, `dumpsys alarm` showed an `ELAPSED_WAKEUP` timer alarm with `window=0` and `exactAllowReason=permission`. The app was sent Home and killed with `am kill`, not force-stopped. Android delivered the alarm, restarted the process, and replaced the ongoing notification with a visible `Timer finished` notification. Samsung's shade was visually inspected. | The completion channel is silent and low importance. This does not prove an audible alarm, DND bypass, or delivery after a force-stop. |
+| Timer destination | A `dynamicisland://timer-details/<stable-id>` launch displayed the matching finished timer and its clear control at the top of the dashboard. Clearing it removed its persisted record. A later inexact completion notification was tapped in Samsung's shade and opened the matching timer 6 card. | This proves app-owned timer routing only; no third-party notification destination has been accepted. |
+| Inexact fallback | After exact-alarm access was revoked, a new timer displayed `inexact timing in use`. `dumpsys alarm` showed `ELAPSED_WAKEUP` with a 45-second delivery window. The app process was killed without force-stop. Android delivered the broadcast about 45 seconds after the requested deadline and showed a finished notification; its tap reached timer 6. | Delivery is delayable; this one run is not a timing guarantee under Doze, battery policy or other devices. |
+
+## Access and cleanup
+
+QA uses the phone with brightness at zero and Do Not Disturb (`zen_mode=2`). Temporary access is returned to its prior state after each pass. App-owned disposable timers and notifications are cleared at the end. The app is stopped and its display returned to off. Never treat an installed debug APK or a local screenshot as a release artifact.

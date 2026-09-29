@@ -1,10 +1,38 @@
-# Android Dynamic Island
+# Island for Android
 
-This repository contains a [reference specification](REFERENCE_SPEC.md) and an installable Android APK implementation in progress. The current app draws a bounded `TYPE_APPLICATION_OVERLAY` for confirmed sources. Its source store supports up to three visible activities under a labeled Android approximation policy; this is **not** a measured iPhone Dynamic Island recreation or a replacement for Android's status bar, privacy indicators, notification shade, lock screen, or Live Update chip.
+**A live activity workspace for Android.** Keep your timers and permitted media sessions close at hand in a small, expandable window near the top of the screen.
 
-## Build
+> **Preview build:** This is an installable Android app in active development. It uses Android's display-over-other-apps window and keeps Android's status bar, notification shade, privacy indicators and lock screen in control.
 
-The project uses JDK 17, Android SDK 36, Gradle 9.7.1 and Android Gradle Plugin 9.1.1. On this Mac mini:
+## What you can do
+
+| Feature | In the app |
+| --- | --- |
+| Timers | Start several independent 1, 5 or 10 minute countdowns. Pause, resume or clear each one. Running timers retain their deadlines if the app process closes. |
+| Island window | Pick an activity, then show a compact pill. Tap it to expand or collapse; long press to stop the window. Up to three sources appear at once, with more retained in the queue. |
+| Media | Opt in to media-session discovery, then choose which observed apps may appear. The dashboard offers playback buttons only when the active session advertises those actions. |
+| Device status | View battery, ringer and torch state without giving the app control of those settings. |
+
+## Get started
+
+1. Install the [debug APK](#build-from-source) on an Android 11 or newer device and open **Island Prototype**.
+2. Start a timer. To show its pill over other apps, open **Overlay settings**, allow display over other apps for Island Prototype, return to the app and choose **Enable Island**.
+3. For timer notifications, choose **Enable timer alerts** and grant notification permission. **Allow exact timing** is optional; without it, Android may deliver completion later.
+4. To show media, choose **Enable media**, grant Android notification access in Settings, then allow each observed media app in the dashboard. You can disable media access or stop the Island window from the app at any time.
+
+Timer completion notifications are silent. The app does not play an alarm sound. Android can delay inexact alarms, and a force-stop prevents alarm delivery until the app is reopened. The Island window closes when the screen turns off or the device locks; Android may also remove an app-owned overlay when its process stops. While media access is enabled, Android blocks ordinary screenshots and screen capture of this app's dashboard; the media pill is protected separately. Ordinary notifications are not automatically turned into activities.
+
+## Current scope
+
+This build is an Android public-API preview. Its layout and ordering are provisional. It has been exercised on a Samsung SM-S906E running Android 16, but has **not** been visually matched to an iPhone 18 Pro Max on iOS 27 or qualified on the provisional Pixel 11 Pro XL/Android 17 target. It does not replace Android's native status chip or draw on the lock screen and always-on display.
+
+---
+
+## For developers and agents
+
+### Build from source
+
+Requirements: JDK 17, Android SDK 36, Gradle 9.7.1 and Android Gradle Plugin 9.1.1. From the repository root:
 
 ```sh
 export JAVA_HOME="$(brew --prefix openjdk@17)"
@@ -12,15 +40,12 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
 ./gradlew --no-daemon --max-workers=1 :app:assembleDebug :app:lintDebug
 ```
 
-The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. The app ID is `dev.luinbytes.dynamicisland`, with minimum Android API 30 and target API 36. Pull requests assemble and lint the APK on GitHub Actions.
+The APK is `app/build/outputs/apk/debug/app-debug.apk`. Its application ID is `dev.luinbytes.dynamicisland`, minimum API 30, target API 36. Pull requests assemble and lint on GitHub Actions. No release-signed package is published.
 
-## Current features
+### Implementation and evidence
 
-- **App-owned timers:** start multiple independent one-, five-, or ten-minute countdowns; pause, resume, and clear each by its stable ID. Deadlines use elapsed real time and restore after an app process restart. A reboot resumes from the last saved remaining time rather than inferring time while powered off.
-- **Island presentation:** choose a source and enable the bounded overlay after granting Android's separate display-over-other-apps access. Tap the pill to expand or collapse it; long-press to stop the overlay. Selection, source lifecycle, and presentation are separate in the state engine. Current geometry, content, and gestures are provisional until native reference capture.
-- **Media discovery:** optionally enable Android notification-listener access to read published media sessions. An observed app appears in diagnostics; the user must then allow that package before its session may enter the Island. Listener disconnect or access loss removes private session content. The app does not yet send publisher media commands or admit ordinary notifications as activities.
-- **Device diagnostics:** display read-only battery, ringer and torch facts. These facts do not automatically become Island activities or trigger device controls.
+- [Reference specification](REFERENCE_SPEC.md), [implementation sequence](docs/verification/09-implementation-acceptance.md), [Android architecture gate](docs/android/05-android-architecture.md)
+- [Samsung prototype evidence](docs/verification/13-samsung-prototype-evidence.md), [device qualification](docs/android/18-device-qualification.md), [paired comparison protocol](docs/verification/12-comparison-protocol.md)
+- [Agent workspace](agents/README.md) for agent-specific handoffs and working notes
 
-The timer repository does not schedule an exact alarm or post a completion notification while the process is stopped. An Android media session is visible only when its publisher exposes it and listener access is connected; lack of an observed session is not proof a publisher task ended. The current overlay runs in the app process and Android may move, cover, or remove it. Stopping the overlay leaves the timer task state intact.
-
-No iPhone 18 Pro Max/iOS 27 native capture, Pixel 11 Pro XL/Android 17 physical qualification, or selected SystemUI build/recovery route is available. Follow the [implementation sequence](docs/verification/09-implementation-acceptance.md), [device qualification](docs/android/18-device-qualification.md), and [paired comparison protocol](docs/verification/12-comparison-protocol.md) before assigning a parity verdict.
+The APK keeps source identity and presentation separate. App-owned timers use monotonic deadlines, per-timer AlarmManager broadcasts and opt-in notifications. Media is keyed by the exact active session token; actions are rechecked before dispatch. A listener callback alone never admits a third-party notification as an activity. Source behavior and UI parity remain subject to the linked physical-device and reference gates.

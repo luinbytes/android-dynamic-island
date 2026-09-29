@@ -9,15 +9,17 @@ import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.view.KeyEvent
 import java.util.Collections
 
 /**
  * Observes the media sessions visible to the app's enabled notification listener.
  *
  * This adapter reports the session token and facts actually published by each session. It does
- * not infer a task identity from a package or title, persist publisher content, or send transport
- * commands. Call [start], [stop], and [reconcile] from any thread; listener callbacks are delivered
- * on the main thread.
+ * not infer a task identity from a package or title or persist publisher content. Calls to [send]
+ * recheck the exact active token and advertised action before dispatch. Call [start], [stop], and
+ * [reconcile] from any thread; listener callbacks are delivered on the main thread.
  */
 internal class MediaSourceAdapter(
     context: Context,
@@ -78,6 +80,90 @@ internal class MediaSourceAdapter(
     /** Re-reads listener access and the active-session list, for example after returning to UI. */
     fun reconcile() = onMain {
         if (started) reconcileOnMain()
+    }
+
+    /**
+     * Requests one currently advertised standard transport action for the exact active token.
+     *
+     * This synchronous method must be called on the main thread. It re-queries active sessions,
+     * then reads the matching controller's current PlaybackState immediately before dispatch. A
+     * `true` result means the command was dispatched to Android/session transport; it does not
+     * confirm that the publisher acted on it or that playback changed.
+     */
+    fun send(token: MediaSession.Token, action: MediaTransportAction): Boolean {
+        check(Looper.myLooper() == mainHandler.looper) {
+            "Media transport actions must be dispatched on the main thread"
+        }
+        val record = sessions[token] ?: return false
+        if (!started || accessState != MediaAccessState.AVAILABLE) return false
+        val actionBit = action.requiredPlaybackActionBit() ?: return false
+
+        return try {
+            val activeControllers = manager.getActiveSessions(notificationListener)
+            val controller = activeControllers.firstOrNull { it.sessionToken == token }
+            if (controller == null) {
+                updateControllers(activeControllers)
+                accessState = MediaAccessState.AVAILABLE
+                publishSnapshot()
+                return false
+            }
+            if (sessions[token] !== record) return false
+
+            val controls = controller.transportControls
+            val currentState = controller.playbackState
+            if (currentState == null || currentState.actions and actionBit == 0L) {
+                refresh(record, controller)
+                publishSnapshot()
+                return false
+            }
+
+            when (action) {
+                MediaTransportAction.PLAY -> {
+                    controls.play()
+                    true
+                }
+                MediaTransportAction.PAUSE -> {
+                    controls.pause()
+                    true
+                }
+                MediaTransportAction.PLAY_PAUSE -> {
+                    val downTime = SystemClock.uptimeMillis()
+                    val pressed = controller.dispatchMediaButtonEvent(
+                        KeyEvent(
+                            downTime,
+                            downTime,
+                            KeyEvent.ACTION_DOWN,
+                            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                            0,
+                        ),
+                    )
+                    val released = controller.dispatchMediaButtonEvent(
+                        KeyEvent(
+                            downTime,
+                            SystemClock.uptimeMillis(),
+                            KeyEvent.ACTION_UP,
+                            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                            0,
+                        ),
+                    )
+                    pressed && released
+                }
+                MediaTransportAction.NEXT -> {
+                    controls.skipToNext()
+                    true
+                }
+                MediaTransportAction.PREVIOUS -> {
+                    controls.skipToPrevious()
+                    true
+                }
+                else -> false
+            }
+        } catch (_: SecurityException) {
+            loseAccess()
+            false
+        } catch (_: RuntimeException) {
+            false
+        }
     }
 
     private fun reconcileOnMain() {
@@ -151,9 +237,9 @@ internal class MediaSourceAdapter(
         }
     }
 
-    private fun refresh(record: SessionRecord) {
+    private fun refresh(record: SessionRecord, source: MediaController = record.controller) {
         if (sessions[record.token] !== record) return
-        val candidate = readFacts(record.controller, record.token)
+        val candidate = readFacts(source, record.token)
         val previous = record.facts
         if (previous?.copy(revision = 0L) == candidate) return
         record.facts = candidate.copy(revision = (previous?.revision ?: 0L) + 1L)
@@ -221,6 +307,15 @@ internal class MediaSourceAdapter(
         clearSessions()
         accessState = MediaAccessState.UNAVAILABLE
         publishSnapshot()
+    }
+
+    private fun MediaTransportAction.requiredPlaybackActionBit(): Long? = when (this) {
+        MediaTransportAction.PLAY -> PlaybackState.ACTION_PLAY
+        MediaTransportAction.PAUSE -> PlaybackState.ACTION_PAUSE
+        MediaTransportAction.PLAY_PAUSE -> PlaybackState.ACTION_PLAY_PAUSE
+        MediaTransportAction.NEXT -> PlaybackState.ACTION_SKIP_TO_NEXT
+        MediaTransportAction.PREVIOUS -> PlaybackState.ACTION_SKIP_TO_PREVIOUS
+        else -> null
     }
 
     private fun publishSnapshot() {
@@ -335,7 +430,7 @@ internal data class MediaSessionFacts(
     val playbackSpeed: Float?,
     val playbackPositionUpdatedAtRealtimeMs: Long?,
     val playbackType: Int?,
-    /** Actions currently advertised in PlaybackState; this adapter does not execute them. */
+    /** Actions currently advertised in PlaybackState; [MediaSourceAdapter.send] rechecks them. */
     val playbackActions: Set<MediaTransportAction>,
     val customActions: List<MediaCustomAction>,
     /** Monotonic revision for changed facts during this active token's lifetime. */

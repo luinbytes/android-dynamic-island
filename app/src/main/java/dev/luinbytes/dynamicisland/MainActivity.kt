@@ -4,8 +4,15 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
 import android.app.NotificationManager
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.session.MediaSession
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.WindowManager
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +25,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -40,9 +48,15 @@ class MainActivity : ComponentActivity() {
     private var overlayGranted by mutableStateOf(false)
     private var listenerGranted by mutableStateOf(false)
     private var message by mutableStateOf<String?>(null)
+    private var openedTimerId by mutableStateOf<String?>(null)
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { IslandRuntime.reconcileTimerAlarms() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (IslandRuntime.mediaEnabled) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        selectTimerFromIntent(intent)
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
@@ -58,6 +72,8 @@ class MainActivity : ComponentActivity() {
                         overlayEnabled = IslandRuntime.overlayEnabled,
                         geometry = OverlayController.geometry,
                         timers = IslandRuntime.timerSnapshots,
+                        openedTimer = IslandRuntime.timerSnapshots.firstOrNull { it.id == openedTimerId },
+                        alarmState = IslandRuntime.alarmState,
                         signals = IslandRuntime.signalSnapshot,
                         island = IslandStateEngine.snapshot,
                         mediaEnabled = IslandRuntime.mediaEnabled,
@@ -77,15 +93,28 @@ class MainActivity : ComponentActivity() {
                         onStartTimer = { IslandRuntime.startTimer(it) },
                         onPauseTimer = { IslandRuntime.pauseTimer(it) },
                         onResumeTimer = { IslandRuntime.resumeTimer(it) },
-                        onCancelTimer = { IslandRuntime.cancelTimer(it) },
+                        onCancelTimer = {
+                            IslandRuntime.cancelTimer(it)
+                            if (openedTimerId == it) openedTimerId = null
+                        },
+                        onEnableTimerNotifications = ::enableTimerNotifications,
+                        onOpenExactAlarmSettings = ::openExactAlarmSettings,
                         onSelectSource = {
                             IslandStateEngine.select(it)
                             IslandRuntime.refresh()
                         },
                         onEnableMedia = ::enableMedia,
-                        onDisableMedia = { IslandRuntime.changeMediaEnabled(false) },
+                        onDisableMedia = {
+                            IslandRuntime.changeMediaEnabled(false)
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        },
                         onOpenListenerSettings = ::openListenerSettings,
                         onAllowMediaPackage = IslandRuntime::setMediaPackageAllowed,
+                        onMediaAction = { token, action ->
+                            if (!IslandRuntime.sendMediaAction(token, action)) {
+                                message = "Playback command is no longer available."
+                            }
+                        },
                     )
                 }
             }
@@ -97,7 +126,25 @@ class MainActivity : ComponentActivity() {
         overlayGranted = Settings.canDrawOverlays(this)
         listenerGranted = getSystemService(NotificationManager::class.java)
             .isNotificationListenerAccessGranted(ComponentName(this, IslandNotificationListener::class.java))
+        IslandRuntime.reconcileTimerAlarms()
+        IslandRuntime.reconcileMedia()
         message = IslandRuntime.refresh()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        selectTimerFromIntent(intent)
+    }
+
+    private fun selectTimerFromIntent(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "dynamicisland" || data.authority != "timer-details") return
+        val timerId = data.lastPathSegment ?: return
+        if (IslandRuntime.timerSnapshots.none { it.id == timerId }) return
+        openedTimerId = timerId
+        IslandStateEngine.select("timer:$timerId")
+        IslandRuntime.refresh()
     }
 
     private fun openOverlaySettings() {
@@ -113,6 +160,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun enableMedia() {
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         IslandRuntime.changeMediaEnabled(true)
         if (!listenerGranted) openListenerSettings()
     }
@@ -124,6 +172,33 @@ class MainActivity : ComponentActivity() {
             message = "This device has no notification access Settings screen."
         }
     }
+
+    private fun enableTimerNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        try {
+            startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            })
+        } catch (_: ActivityNotFoundException) {
+            message = "This device has no app notification Settings screen."
+        }
+    }
+
+    private fun openExactAlarmSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        try {
+            startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                data = Uri.parse("package:$packageName")
+            })
+        } catch (_: ActivityNotFoundException) {
+            message = "This device has no exact alarm Settings screen."
+        }
+    }
 }
 
 @Composable
@@ -133,6 +208,8 @@ private fun PrototypeScreen(
     overlayEnabled: Boolean,
     geometry: String,
     timers: List<TimerSnapshot>,
+    openedTimer: TimerSnapshot?,
+    alarmState: AlarmState?,
     signals: DeviceSignalSnapshot,
     island: IslandSnapshot,
     mediaEnabled: Boolean,
@@ -150,11 +227,14 @@ private fun PrototypeScreen(
     onPauseTimer: (String) -> Unit,
     onResumeTimer: (String) -> Unit,
     onCancelTimer: (String) -> Unit,
+    onEnableTimerNotifications: () -> Unit,
+    onOpenExactAlarmSettings: () -> Unit,
     onSelectSource: (String) -> Unit,
     onEnableMedia: () -> Unit,
     onDisableMedia: () -> Unit,
     onOpenListenerSettings: () -> Unit,
     onAllowMediaPackage: (String, Boolean) -> Unit,
+    onMediaAction: (MediaSession.Token, MediaTransportAction) -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
@@ -168,6 +248,16 @@ private fun PrototypeScreen(
             "An Android app overlay for confirmed activities. Pixel system integration and iPhone visual matching remain separate device gates.",
             style = MaterialTheme.typography.bodyMedium,
         )
+
+        if (openedTimer != null) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Opened timer ${openedTimer.createdOrder}", style = MaterialTheme.typography.titleMedium)
+                    Text("${formatTimer(openedTimer.remainingMillis)} · ${openedTimer.state.name.lowercase()}")
+                    OutlinedButton(onClick = { onCancelTimer(openedTimer.id) }) { Text("Clear timer") }
+                }
+            }
+        }
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -208,6 +298,26 @@ private fun PrototypeScreen(
                 }
                 for (session in mediaSessions) {
                     Text("${session.displayTitle ?: session.title ?: "Untitled"} · ${session.packageName}", style = MaterialTheme.typography.bodySmall)
+                    if (session.packageName in allowedMediaPackages) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            for ((action, label) in listOf(
+                                MediaTransportAction.PREVIOUS to "Previous",
+                                MediaTransportAction.PLAY to "Play",
+                                MediaTransportAction.PAUSE to "Pause",
+                                MediaTransportAction.PLAY_PAUSE to "Toggle",
+                                MediaTransportAction.NEXT to "Next",
+                            )) {
+                                if (action in session.playbackActions) {
+                                    OutlinedButton(onClick = { onMediaAction(session.token, action) }) {
+                                        Text(label)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -236,7 +346,24 @@ private fun PrototypeScreen(
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Timers", style = MaterialTheme.typography.titleMedium)
-                Text("Start independent app-owned countdowns. They keep their deadline across process restarts; an exact background completion alert is not configured.")
+                Text("Start independent app-owned countdowns. Android schedules their completion while the app is closed; exact timing and alerts depend on access below.")
+                if (alarmState != null) {
+                    Text("Background: ${alarmState.scheduledAlarmCount} scheduled · ${when {
+                        alarmState.exactAlarmAccess -> "exact timing available"
+                        alarmState.inexactFallbackUsed -> "inexact timing in use"
+                        else -> "exact timing not allowed"
+                    }}")
+                    Text(if (alarmState.notificationsAvailable) "Completion alerts: available" else "Completion alerts: unavailable")
+                    if (!alarmState.notificationsAvailable) {
+                        OutlinedButton(onClick = onEnableTimerNotifications) { Text("Enable timer alerts") }
+                    }
+                    if (!alarmState.exactAlarmAccess) {
+                        OutlinedButton(onClick = onOpenExactAlarmSettings) { Text("Allow exact timing") }
+                    }
+                    if (alarmState.message.isNotBlank()) {
+                        Text(alarmState.message, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { onStartTimer(60_000L) }) { Text("1 min") }
                     OutlinedButton(onClick = { onStartTimer(300_000L) }) { Text("5 min") }

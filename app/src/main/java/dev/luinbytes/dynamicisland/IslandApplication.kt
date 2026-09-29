@@ -1,11 +1,16 @@
 package dev.luinbytes.dynamicisland
 
 import android.app.Application
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.SystemClock
+import android.os.PowerManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -33,13 +38,23 @@ internal object IslandRuntime {
     private lateinit var deviceSignals: DeviceSignals
     private val timerRevisions = HashMap<String, Long>()
     private var previousTimerIds = emptySet<String>()
+    private var previousTimerStates = emptyMap<String, TimerState>()
     private var initialized = false
+    private var screenInteractive = true
     private var mediaAdapter: MediaSourceAdapter? = null
     private val mediaIds = HashMap<MediaSession.Token, String>()
     private val mediaRevisions = HashMap<String, Long>()
     private val mediaStarted = HashMap<String, Long>()
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            screenInteractive = intent.action != Intent.ACTION_SCREEN_OFF
+            syncOverlay()
+        }
+    }
 
     var timerSnapshots by mutableStateOf<List<TimerSnapshot>>(emptyList())
+        private set
+    var alarmState by mutableStateOf<AlarmState?>(null)
         private set
     var signalSnapshot by mutableStateOf(DeviceSignalSnapshot())
         private set
@@ -67,6 +82,12 @@ internal object IslandRuntime {
         val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         mediaEnabled = prefs.getBoolean(KEY_MEDIA, false)
         allowedMediaPackages = prefs.getStringSet(KEY_MEDIA_PACKAGES, emptySet())?.toSet().orEmpty()
+        screenInteractive = appContext.getSystemService(PowerManager::class.java).isInteractive
+        appContext.registerReceiver(screenReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        })
         timersRepository = AppTimerRepository(appContext)
         timerSubscription = timersRepository.observe(::onTimersChanged)
         deviceSignals = DeviceSignals(appContext) { signalSnapshot = it }
@@ -81,6 +102,17 @@ internal object IslandRuntime {
 
     fun cancelTimer(id: String): Boolean = timersRepository.cancel(id)
 
+    fun reconcileTimerAlarms() {
+        alarmState = TimerAlarmScheduler.reconcile(appContext, timersRepository.snapshot())
+    }
+
+    fun onTimerAlarm(context: Context, timerId: String) {
+        val snapshots = timersRepository.snapshot()
+        alarmState = TimerAlarmScheduler.reconcile(context, snapshots)
+        snapshots.firstOrNull { it.id == timerId && it.state == TimerState.FINISHED }
+            ?.let { TimerAlarmScheduler.postCompletion(context, it) }
+    }
+
     fun changeOverlayEnabled(enabled: Boolean): String? {
         overlayEnabled = enabled
         appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -94,6 +126,10 @@ internal object IslandRuntime {
 
     fun refresh(): String? = syncOverlay()
 
+    fun reconcileMedia() {
+        if (mediaEnabled && listenerConnected) mediaAdapter?.reconcile()
+    }
+
     fun changeMediaEnabled(enabled: Boolean) {
         mediaEnabled = enabled
         appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -103,6 +139,7 @@ internal object IslandRuntime {
             mediaAdapter?.stop()
             clearMediaSources(terminal = true)
             mediaSessions = emptyList()
+            knownMediaPackages = emptySet()
             mediaAccess = MediaAccessState.STOPPED
         }
     }
@@ -116,6 +153,13 @@ internal object IslandRuntime {
         if (mediaEnabled && listenerConnected) onMediaSnapshot(mediaSessions, mediaAccess)
     }
 
+    fun sendMediaAction(token: MediaSession.Token, action: MediaTransportAction): Boolean {
+        if (!mediaEnabled || !listenerConnected || mediaAccess != MediaAccessState.AVAILABLE) return false
+        val current = mediaSessions.firstOrNull { it.token == token } ?: return false
+        if (current.packageName !in allowedMediaPackages || action !in current.playbackActions) return false
+        return mediaAdapter?.send(token, action) == true
+    }
+
     fun onListenerConnection(connected: Boolean) {
         listenerConnected = connected
         if (connected && mediaEnabled) {
@@ -124,6 +168,8 @@ internal object IslandRuntime {
             mediaAdapter?.stop()
             if (!connected && mediaEnabled) {
                 clearMediaSources(terminal = false)
+                mediaSessions = emptyList()
+                knownMediaPackages = emptySet()
                 mediaAccess = MediaAccessState.UNAVAILABLE
             }
         }
@@ -147,6 +193,7 @@ internal object IslandRuntime {
         if (!mediaEnabled) return
         if (!listenerConnected) {
             mediaSessions = emptyList()
+            knownMediaPackages = emptySet()
             mediaAccess = MediaAccessState.UNAVAILABLE
             clearMediaSources(terminal = false)
             return
@@ -155,6 +202,7 @@ internal object IslandRuntime {
         mediaSessions = if (access == MediaAccessState.AVAILABLE) sessions else emptyList()
         knownMediaPackages = knownMediaPackages + sessions.map { it.packageName }
         if (access != MediaAccessState.AVAILABLE) {
+            knownMediaPackages = emptySet()
             clearMediaSources(terminal = false)
             return
         }
@@ -220,6 +268,13 @@ internal object IslandRuntime {
 
     private fun onTimersChanged(timers: List<TimerSnapshot>) {
         timerSnapshots = timers
+        val currentStates = timers.associate { it.id to it.state }
+        if (currentStates != previousTimerStates) {
+            alarmState = TimerAlarmScheduler.reconcile(appContext, timers)
+            timers.filter { it.state == TimerState.FINISHED }
+                .forEach { TimerAlarmScheduler.postCompletion(appContext, it) }
+            previousTimerStates = currentStates
+        }
         val now = SystemClock.elapsedRealtime()
         val ids = timers.mapTo(HashSet()) { it.id }
         for (timer in timers) {
@@ -254,7 +309,8 @@ internal object IslandRuntime {
     }
 
     private fun syncOverlay(): String? {
-        if (!overlayEnabled) {
+        val deviceLocked = appContext.getSystemService(KeyguardManager::class.java).isDeviceLocked
+        if (!overlayEnabled || !screenInteractive || deviceLocked) {
             OverlayController.stop()
             return null
         }

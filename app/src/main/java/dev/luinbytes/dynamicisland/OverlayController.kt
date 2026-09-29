@@ -46,7 +46,12 @@ internal object OverlayController {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL }
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            if (snapshot.selectedSourceNeedsCaptureProtection()) {
+                flags = flags or WindowManager.LayoutParams.FLAG_SECURE
+            }
+        }
 
         updatePosition(windowManager, layout, appContext)
         return try {
@@ -79,6 +84,11 @@ internal object OverlayController {
         pill.render(snapshot)
         layout.width = context.dp(widthFor(snapshot))
         layout.height = context.dp(heightFor(snapshot))
+        layout.flags = if (snapshot.selectedSourceNeedsCaptureProtection()) {
+            layout.flags or WindowManager.LayoutParams.FLAG_SECURE
+        } else {
+            layout.flags and WindowManager.LayoutParams.FLAG_SECURE.inv()
+        }
         updatePosition(windowManager, layout, context)
         try {
             windowManager.updateViewLayout(pill, layout)
@@ -117,6 +127,9 @@ internal object OverlayController {
 
     private fun heightFor(snapshot: IslandSnapshot): Int =
         if (snapshot.presentation == IslandPresentation.EXPANDED) 100 else 52
+
+    private fun IslandSnapshot.selectedSourceNeedsCaptureProtection(): Boolean =
+        selectedId?.let(sourcesById::get)?.kind == IslandSourceKind.MEDIA
 
     private fun updatePosition(
         windowManager: WindowManager,
@@ -187,7 +200,9 @@ internal class IslandPillView(context: Context) : View(context) {
         canvas.drawCircle(context.dp(25).toFloat(), centerY, context.dp(5).toFloat(), accent)
         val textX = context.dp(42).toFloat()
         val titleText = if (!expanded && selected?.kind == IslandSourceKind.TIMER) {
-            "${selected.title} ${selected.detail?.substringBefore(' ').orEmpty()}"
+            val countdown = selected.detail?.substringBefore(' ').orEmpty()
+            if (countdown.firstOrNull()?.isDigit() == true) "${selected.title} $countdown"
+            else selected.title
         } else {
             selected?.title ?: "ISLAND"
         }
