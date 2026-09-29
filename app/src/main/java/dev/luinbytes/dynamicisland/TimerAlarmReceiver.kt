@@ -17,12 +17,19 @@ class TimerAlarmReceiver : BroadcastReceiver() {
             }
 
             TimerAlarmScheduler.ACTION_TIMER_NOTIFICATION -> {
-                if (segments.size != 3) return
+                if (segments.size != 4) return
                 val timerId = segments[0].takeIf(String::isNotBlank) ?: return
                 val action = runCatching { TimerNotificationAction.valueOf(segments[1]) }.getOrNull() ?: return
                 val expectedState = runCatching { TimerState.valueOf(segments[2]) }.getOrNull() ?: return
+                val expectedGeneration = segments[3].toLongOrNull()?.takeIf { it >= 0L } ?: return
                 if (!actionMatchesState(action, expectedState)) return
-                IslandRuntime.onTimerNotificationAction(appContext, timerId, action, expectedState)
+                IslandRuntime.onTimerNotificationAction(
+                    appContext,
+                    timerId,
+                    action,
+                    expectedState,
+                    expectedGeneration,
+                )
             }
         }
     }

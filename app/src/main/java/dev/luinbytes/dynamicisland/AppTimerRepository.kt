@@ -27,6 +27,7 @@ data class TimerSnapshot(
     val remainingMillis: Long,
     val state: TimerState,
     val createdOrder: Long,
+    val actionGeneration: Long = 0L,
 )
 
 /**
@@ -49,6 +50,7 @@ class AppTimerRepository(context: Context) : Closeable {
         val label: String,
         val durationMillis: Long,
         val createdOrder: Long,
+        var actionGeneration: Long,
         var state: TimerState,
         var remainingMillis: Long,
         var deadlineElapsedMillis: Long,
@@ -69,8 +71,11 @@ class AppTimerRepository(context: Context) : Closeable {
             if (closed) return
 
             val now = SystemClock.elapsedRealtime()
-            refreshExpiredTimers(now)
-            persist(now, durable = false)
+            val transitioned = refreshExpiredTimers(now)
+            if (!persist(now, durable = transitioned)) {
+                if (transitioned) reloadDurableStateAndReschedule()
+                return
+            }
             publish(now)
             updateTickerState()
         }
@@ -109,6 +114,7 @@ class AppTimerRepository(context: Context) : Closeable {
             label = normalizedLabel,
             durationMillis = durationMillis,
             createdOrder = nextCreatedOrder++,
+            actionGeneration = 1L,
             state = TimerState.RUNNING,
             remainingMillis = durationMillis,
             deadlineElapsedMillis = now + durationMillis,
@@ -133,6 +139,7 @@ class AppTimerRepository(context: Context) : Closeable {
         timer.remainingMillis = remainingAt(timer, now)
         timer.deadlineElapsedMillis = NO_DEADLINE
         timer.state = TimerState.PAUSED
+        bumpActionGeneration(timer)
         commitAndPublish(now)
         return true
     }
@@ -160,6 +167,7 @@ class AppTimerRepository(context: Context) : Closeable {
             timer.deadlineElapsedMillis = now + timer.remainingMillis
             timer.state = TimerState.RUNNING
         }
+        bumpActionGeneration(timer)
         commitAndPublish(now)
         return true
     }
@@ -213,7 +221,10 @@ class AppTimerRepository(context: Context) : Closeable {
         if (closed) return
         val now = SystemClock.elapsedRealtime()
         refreshExpiredTimers(now)
-        check(persist(now, durable = true)) { "Could not durably persist app timers" }
+        if (!persist(now, durable = true)) {
+            reloadDurableStateAndReschedule()
+            throw IllegalStateException("Could not durably persist app timers")
+        }
         closed = true
         handler.removeCallbacks(ticker)
         tickerPosted = false
@@ -251,12 +262,14 @@ class AppTimerRepository(context: Context) : Closeable {
                 val deadline = item.optLong(JSON_DEADLINE, NO_DEADLINE)
                 val checkpointElapsed = item.optLong(JSON_CHECKPOINT_ELAPSED, 0L)
                 val savedBootCount = item.optInt(JSON_BOOT_COUNT, UNKNOWN_BOOT_COUNT)
+                val actionGeneration = item.optLong(JSON_ACTION_GENERATION, 0L).coerceAtLeast(0L)
 
                 val timer = MutableTimer(
                     id = id,
                     label = item.optString(JSON_LABEL).trim().ifEmpty { "Timer" },
                     durationMillis = duration,
                     createdOrder = createdOrder,
+                    actionGeneration = actionGeneration,
                     state = state,
                     remainingMillis = remaining,
                     deadlineElapsedMillis = NO_DEADLINE,
@@ -268,6 +281,7 @@ class AppTimerRepository(context: Context) : Closeable {
                     } else if (isSameBoot(savedBootCount, currentBootCount, checkpointElapsed, nowElapsed)) {
                         // An invalid/missing monotonic deadline is not proof that this timer ended.
                         timer.state = TimerState.PAUSED
+                        bumpActionGeneration(timer)
                     } else if (remaining > 0L && remaining <= Long.MAX_VALUE - nowElapsed) {
                         // Do not compare wall time across boots: a manual clock change could finish
                         // a timer that had not actually elapsed.
@@ -277,6 +291,7 @@ class AppTimerRepository(context: Context) : Closeable {
                         // uncertain state paused so a reset cannot manufacture a completion.
                         timer.state = TimerState.PAUSED
                         timer.remainingMillis = 0L
+                        bumpActionGeneration(timer)
                     }
                 }
                 timers[id] = timer
@@ -308,6 +323,7 @@ class AppTimerRepository(context: Context) : Closeable {
                 timer.remainingMillis = 0L
                 timer.deadlineElapsedMillis = NO_DEADLINE
                 timer.state = TimerState.FINISHED
+                bumpActionGeneration(timer)
                 changed = true
             }
         }
@@ -317,11 +333,7 @@ class AppTimerRepository(context: Context) : Closeable {
     private fun commitAndPublish(nowElapsed: Long) {
         if (!persist(nowElapsed, durable = true)) {
             // Do not let a later ticker write make a failed user action appear successful.
-            timers.clear()
-            nextCreatedOrder = 1L
-            restore()
-            refreshExpiredTimers(nowElapsed)
-            updateTickerState()
+            reloadDurableStateAndReschedule()
             throw IllegalStateException("Could not durably persist app timers")
         }
         publish(nowElapsed)
@@ -347,6 +359,7 @@ class AppTimerRepository(context: Context) : Closeable {
                     .put(JSON_LABEL, timer.label)
                     .put(JSON_DURATION, timer.durationMillis)
                     .put(JSON_CREATED_ORDER, timer.createdOrder)
+                    .put(JSON_ACTION_GENERATION, timer.actionGeneration)
                     .put(JSON_STATE, timer.state.name)
                     .put(JSON_REMAINING, remaining)
                     .put(JSON_DEADLINE, timer.deadlineElapsedMillis)
@@ -389,6 +402,7 @@ class AppTimerRepository(context: Context) : Closeable {
                     },
                     state = timer.state,
                     createdOrder = timer.createdOrder,
+                    actionGeneration = timer.actionGeneration,
                 )
             }
         return Collections.unmodifiableList(values)
@@ -396,6 +410,18 @@ class AppTimerRepository(context: Context) : Closeable {
 
     private fun remainingAt(timer: MutableTimer, nowElapsed: Long): Long =
         (timer.deadlineElapsedMillis - nowElapsed).coerceAtLeast(0L)
+
+    private fun bumpActionGeneration(timer: MutableTimer) {
+        check(timer.actionGeneration < Long.MAX_VALUE) { "Timer action generation is exhausted" }
+        timer.actionGeneration++
+    }
+
+    private fun reloadDurableStateAndReschedule() {
+        timers.clear()
+        nextCreatedOrder = 1L
+        restore()
+        updateTickerState()
+    }
 
     private fun updateTickerState() {
         if (closed) return
@@ -445,6 +471,7 @@ class AppTimerRepository(context: Context) : Closeable {
         const val JSON_LABEL = "label"
         const val JSON_DURATION = "durationMillis"
         const val JSON_CREATED_ORDER = "createdOrder"
+        const val JSON_ACTION_GENERATION = "actionGeneration"
         const val JSON_STATE = "state"
         const val JSON_REMAINING = "remainingMillis"
         const val JSON_DEADLINE = "deadlineElapsedMillis"

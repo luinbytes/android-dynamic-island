@@ -121,6 +121,19 @@ object TimerAlarmScheduler {
                     cancelAlarm(appContext, alarmManager, timer.id)
                     if (timer.createdOrder !in record.completionAttempts) {
                         cancelTimerNotification(notificationAccess.manager, timer.createdOrder)
+                    } else {
+                        val manager = notificationAccess.manager
+                        if (
+                            notificationAccess.available && manager != null &&
+                            hasActiveTimerNotification(manager, timer.createdOrder)
+                        ) {
+                            // Replace any pre-generation Clear action on an existing completion
+                            // notification. Only update notifications Android still considers active:
+                            // a dismissed completion must not be resurrected by reconciliation.
+                            if (!postCompletionNotification(appContext, manager, timer)) {
+                                notificationsFailed = true
+                            }
+                        }
                     }
                 }
             }
@@ -365,11 +378,13 @@ object TimerAlarmScheduler {
             .appendPath(timer.id)
             .appendPath(action.name)
             .appendPath(expectedState.name)
+            .appendPath(timer.actionGeneration.toString())
             .build()
         val intent = Intent(context, TimerAlarmReceiver::class.java)
             .setAction(ACTION_TIMER_NOTIFICATION)
             .setData(data)
-        val requestCode = timer.id.hashCode() * 31 + action.ordinal * 7 + expectedState.ordinal
+        val requestCode = (((timer.id.hashCode() * 31 + action.ordinal) * 31 + expectedState.ordinal) * 31) +
+            timer.actionGeneration.hashCode()
         return PendingIntent.getBroadcast(
             context,
             requestCode,
@@ -394,6 +409,13 @@ object TimerAlarmScheduler {
             // The notification may already have been removed by the user or system.
         }
     }
+
+    private fun hasActiveTimerNotification(manager: NotificationManager, createdOrder: Long): Boolean =
+        try {
+            manager.activeNotifications.any { it.id == notificationId(createdOrder) }
+        } catch (_: RuntimeException) {
+            false
+        }
 
     private fun notificationId(createdOrder: Long): Int {
         val slot = (createdOrder - 1L) % NOTIFICATION_ID_RANGE

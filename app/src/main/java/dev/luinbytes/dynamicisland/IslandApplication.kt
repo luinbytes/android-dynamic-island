@@ -119,20 +119,28 @@ internal object IslandRuntime {
         timerId: String,
         action: TimerNotificationAction,
         expectedState: TimerState,
+        expectedGeneration: Long,
     ): Boolean {
-        val current = timersRepository.snapshot().firstOrNull { it.id == timerId }
-        if (current?.state != expectedState) {
-            alarmState = TimerAlarmScheduler.reconcile(context, timersRepository.snapshot())
+        val currentSnapshots = timersRepository.snapshot()
+        val current = currentSnapshots.firstOrNull { it.id == timerId }
+        if (current?.state != expectedState || current.actionGeneration != expectedGeneration) {
+            alarmState = TimerAlarmScheduler.reconcile(context, currentSnapshots)
             return false
         }
-        return when (action) {
-            TimerNotificationAction.PAUSE ->
-                expectedState == TimerState.RUNNING && timersRepository.pause(timerId)
-            TimerNotificationAction.RESUME ->
-                expectedState == TimerState.PAUSED && timersRepository.resume(timerId)
-            TimerNotificationAction.CLEAR ->
-                expectedState in setOf(TimerState.PAUSED, TimerState.FINISHED) && timersRepository.cancel(timerId)
+        val changed = try {
+            when (action) {
+                TimerNotificationAction.PAUSE ->
+                    expectedState == TimerState.RUNNING && timersRepository.pause(timerId)
+                TimerNotificationAction.RESUME ->
+                    expectedState == TimerState.PAUSED && timersRepository.resume(timerId)
+                TimerNotificationAction.CLEAR ->
+                    expectedState in setOf(TimerState.PAUSED, TimerState.FINISHED) && timersRepository.cancel(timerId)
+            }
+        } catch (_: RuntimeException) {
+            false
         }
+        if (!changed) alarmState = TimerAlarmScheduler.reconcile(context, timersRepository.snapshot())
+        return changed
     }
 
     fun changeOverlayEnabled(enabled: Boolean): String? {
