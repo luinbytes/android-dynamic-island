@@ -228,6 +228,17 @@ internal object IslandRuntime {
         return mediaAdapter?.send(token, action) == true
     }
 
+    fun mediaFactsForSource(sourceId: String): MediaSessionFacts? {
+        if (!mediaEnabled || !listenerConnected || mediaAccess != MediaAccessState.AVAILABLE) return null
+        val token = mediaIds.entries.firstOrNull { it.value == sourceId }?.key ?: return null
+        return mediaSessions.firstOrNull { it.token == token && it.packageName in allowedMediaPackages }
+    }
+
+    fun sendMediaActionForSource(sourceId: String, action: MediaTransportAction): Boolean {
+        val facts = mediaFactsForSource(sourceId) ?: return false
+        return sendMediaAction(facts.token, action)
+    }
+
     fun onListenerConnection(connected: Boolean) {
         listenerConnected = connected
         if (connected && mediaEnabled) {
