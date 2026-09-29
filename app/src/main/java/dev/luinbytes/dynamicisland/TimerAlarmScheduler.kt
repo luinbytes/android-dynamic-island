@@ -24,6 +24,7 @@ data class AlarmState(
     val inexactFallbackUsed: Boolean,
     val alertsEnabled: Boolean,
     val notificationsAvailable: Boolean,
+    val notificationPostFailed: Boolean,
     val persistenceHealthy: Boolean,
     val message: String,
 )
@@ -108,6 +109,7 @@ object TimerAlarmScheduler {
                 inexactFallbackUsed = false,
                 alertsEnabled = alertsOptIn,
                 notificationsAvailable = notificationAccess.available,
+                notificationPostFailed = false,
                 persistenceHealthy = false,
                 message = "Timer alarm identities could not be persisted; retrying while the app is open",
             )
@@ -213,6 +215,7 @@ object TimerAlarmScheduler {
             inexactFallbackUsed = fallbackUsed,
             alertsEnabled = alertsOptIn,
             notificationsAvailable = notificationAccess.available && !notificationsFailed,
+            notificationPostFailed = notificationsFailed,
             persistenceHealthy = recordStored,
             message = messages.joinToString(" · "),
         )

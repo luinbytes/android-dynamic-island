@@ -134,7 +134,7 @@ internal object IslandRuntime {
     private fun reconcileTimerSnapshot(timers: List<TimerSnapshot>) {
         alarmState = TimerAlarmScheduler.reconcile(appContext, timers)
         schedulerRetryHandler.removeCallbacks(schedulerRetry)
-        if (alarmState?.persistenceHealthy == false) {
+        if (alarmState?.persistenceHealthy == false || alarmState?.notificationPostFailed == true) {
             schedulerRetryHandler.postDelayed(schedulerRetry, 10_000L)
         }
     }
