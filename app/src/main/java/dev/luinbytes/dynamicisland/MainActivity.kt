@@ -257,9 +257,9 @@ private fun PrototypeScreen(
     ) {
         Spacer(Modifier.height(10.dp))
         Text("ISLAND", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        Text("Live activity workspace", style = MaterialTheme.typography.headlineMedium)
+        Text("Your activities, at a glance", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "An Android app overlay for confirmed activities. Pixel system integration and iPhone visual matching remain separate device gates.",
+            "Keep timers and approved playback close by. Show a small window over other apps when you choose.",
             style = MaterialTheme.typography.bodyMedium,
         )
 
@@ -275,9 +275,77 @@ private fun PrototypeScreen(
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Access", style = MaterialTheme.typography.titleMedium)
-                Text(if (overlayGranted) "Draw over apps: granted" else "Draw over apps: not granted")
-                Text("Notification access: ${if (listenerGranted) "granted" else "not granted"}")
+                Text("Timers", style = MaterialTheme.typography.titleMedium)
+                Text("Start more than one countdown. Timers keep running when you leave the app.")
+                OutlinedTextField(
+                    value = customLabel,
+                    onValueChange = { customLabel = it.take(48) },
+                    label = { Text("Timer name (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onStartTimer(60_000L, customLabel) }) { Text("1 min") }
+                    OutlinedButton(onClick = { onStartTimer(300_000L, customLabel) }) { Text("5 min") }
+                    OutlinedButton(onClick = { onStartTimer(600_000L, customLabel) }) { Text("10 min") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = customMinutes,
+                        onValueChange = { customMinutes = it.filter(Char::isDigit).take(4) },
+                        label = { Text("Minutes (1–1440)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                    )
+                    val minutes = customMinutes.toLongOrNull()
+                    Button(
+                        onClick = {
+                            if (minutes != null) {
+                                onStartTimer(minutes * 60_000L, customLabel)
+                                customMinutes = ""
+                            }
+                        },
+                        enabled = minutes != null && minutes in 1L..1440L,
+                    ) { Text("Start") }
+                }
+                if (timers.isEmpty()) Text("No timers")
+                for (timer in timers) {
+                    Text("${if (timer.label == "Timer") "Timer ${timer.createdOrder}" else timer.label} · ${formatTimer(timer.remainingMillis)} · ${timer.state.name.lowercase()}")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (timer.state == TimerState.RUNNING) {
+                            OutlinedButton(onClick = { onPauseTimer(timer.id) }) { Text("Pause") }
+                        } else if (timer.state == TimerState.PAUSED) {
+                            OutlinedButton(onClick = { onResumeTimer(timer.id) }) { Text("Resume") }
+                        }
+                        OutlinedButton(onClick = { onCancelTimer(timer.id) }) { Text("Clear") }
+                    }
+                }
+                if (alarmState != null) {
+                    Text("Background: ${alarmState.scheduledAlarmCount} scheduled · ${when {
+                        alarmState.exactAlarmAccess -> "exact timing available"
+                        alarmState.inexactFallbackUsed -> "inexact timing in use"
+                        else -> "exact timing not allowed"
+                    }}")
+                    Text(if (alarmState.notificationsAvailable) "Completion alerts: available" else "Completion alerts: unavailable")
+                    if (!alarmState.notificationsAvailable) {
+                        OutlinedButton(onClick = onEnableTimerNotifications) { Text("Enable timer alerts") }
+                    }
+                    if (!alarmState.exactAlarmAccess) {
+                        OutlinedButton(onClick = onOpenExactAlarmSettings) { Text("Allow exact timing") }
+                    }
+                    if (alarmState.message.isNotBlank()) {
+                        Text(alarmState.message, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Permissions", style = MaterialTheme.typography.titleMedium)
+                Text(if (overlayGranted) "Display over other apps: allowed" else "Display over other apps: off")
+                Text("Media access: ${if (listenerGranted) "allowed" else "off"}")
                 if (!overlayGranted) {
                     Text("Open Android Settings and enable display over other apps for this app. Return here to recheck it.")
                     OutlinedButton(onClick = onOpenOverlaySettings) { Text("Open overlay settings") }
@@ -286,10 +354,29 @@ private fun PrototypeScreen(
         }
 
         Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Island window", style = MaterialTheme.typography.titleMedium)
+                Text(when {
+                    overlayRunning -> "Showing ${island.visibleIds.size} of ${island.sourcesById.values.count { it.lifecycle == IslandLifecycle.ACTIVE || it.lifecycle == IslandLifecycle.STALE }} active sources"
+                    overlayEnabled -> "Ready when a source is active and overlay access is granted"
+                    else -> "Stopped"
+                })
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = onStart, enabled = overlayGranted && !overlayEnabled) {
+                        Text("Enable Island")
+                    }
+                    OutlinedButton(onClick = onStop, enabled = overlayEnabled || overlayRunning) {
+                        Text("Stop")
+                    }
+                }
+                Text("Tap the pill to expand or collapse it. Press and hold to stop the window. Android keeps control of the status bar and lock screen.")
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Media sessions", style = MaterialTheme.typography.titleMedium)
-                Text("Read published playback sessions only when enabled. Choose which apps may appear in the Island; native playback controls stay available.")
-                Text("Listener: ${if (listenerConnected) "connected" else "disconnected"} · media feed: ${mediaAccess.name.lowercase()}")
+                Text("Music and audio", style = MaterialTheme.typography.titleMedium)
+                Text("Choose which playing apps can appear in the Island. Their usual playback controls stay available.")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!mediaEnabled) Button(onClick = onEnableMedia) { Text("Enable media") }
                     else OutlinedButton(onClick = onDisableMedia) { Text("Disable media") }
@@ -337,98 +424,8 @@ private fun PrototypeScreen(
         }
 
         Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Island window", style = MaterialTheme.typography.titleMedium)
-                Text(when {
-                    overlayRunning -> "Showing ${island.visibleIds.size} of ${island.sourcesById.values.count { it.lifecycle == IslandLifecycle.ACTIVE || it.lifecycle == IslandLifecycle.STALE }} active sources"
-                    overlayEnabled -> "Ready when a source is active and overlay access is granted"
-                    else -> "Stopped"
-                })
-                Text(geometry, style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = onStart, enabled = overlayGranted && !overlayEnabled) {
-                        Text("Enable Island")
-                    }
-                    OutlinedButton(onClick = onStop, enabled = overlayEnabled || overlayRunning) {
-                        Text("Stop")
-                    }
-                }
-                Text("Tap the bounded pill to expand or collapse; long-press it to stop the window. Android owns the status bar, shade and lock screen.")
-            }
-        }
-
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Timers", style = MaterialTheme.typography.titleMedium)
-                Text("Start independent app-owned countdowns. Android schedules their completion while the app is closed; exact timing and alerts depend on access below.")
-                if (alarmState != null) {
-                    Text("Background: ${alarmState.scheduledAlarmCount} scheduled · ${when {
-                        alarmState.exactAlarmAccess -> "exact timing available"
-                        alarmState.inexactFallbackUsed -> "inexact timing in use"
-                        else -> "exact timing not allowed"
-                    }}")
-                    Text(if (alarmState.notificationsAvailable) "Completion alerts: available" else "Completion alerts: unavailable")
-                    if (!alarmState.notificationsAvailable) {
-                        OutlinedButton(onClick = onEnableTimerNotifications) { Text("Enable timer alerts") }
-                    }
-                    if (!alarmState.exactAlarmAccess) {
-                        OutlinedButton(onClick = onOpenExactAlarmSettings) { Text("Allow exact timing") }
-                    }
-                    if (alarmState.message.isNotBlank()) {
-                        Text(alarmState.message, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                OutlinedTextField(
-                    value = customLabel,
-                    onValueChange = { customLabel = it.take(48) },
-                    label = { Text("Timer name (optional)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { onStartTimer(60_000L, customLabel) }) { Text("1 min") }
-                    OutlinedButton(onClick = { onStartTimer(300_000L, customLabel) }) { Text("5 min") }
-                    OutlinedButton(onClick = { onStartTimer(600_000L, customLabel) }) { Text("10 min") }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = customMinutes,
-                        onValueChange = { customMinutes = it.filter(Char::isDigit).take(4) },
-                        label = { Text("Minutes (1–1440)") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f),
-                    )
-                    val minutes = customMinutes.toLongOrNull()
-                    Button(
-                        onClick = {
-                            if (minutes != null) {
-                                onStartTimer(minutes * 60_000L, customLabel)
-                                customMinutes = ""
-                            }
-                        },
-                        enabled = minutes != null && minutes in 1L..1440L,
-                    ) { Text("Start") }
-                }
-                if (timers.isEmpty()) Text("No timers")
-                for (timer in timers) {
-                    Text("${if (timer.label == "Timer") "Timer ${timer.createdOrder}" else timer.label} · ${formatTimer(timer.remainingMillis)} · ${timer.state.name.lowercase()}")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (timer.state == TimerState.RUNNING) {
-                            OutlinedButton(onClick = { onPauseTimer(timer.id) }) { Text("Pause") }
-                        } else if (timer.state == TimerState.PAUSED) {
-                            OutlinedButton(onClick = { onResumeTimer(timer.id) }) { Text("Resume") }
-                        }
-                        OutlinedButton(onClick = { onCancelTimer(timer.id) }) { Text("Clear") }
-                    }
-                }
-            }
-        }
-
-        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Sources", style = MaterialTheme.typography.titleMedium)
-                Text("Policy: ${island.policyVersion} · ${island.policyLabel}", style = MaterialTheme.typography.bodySmall)
+                Text("What's showing", style = MaterialTheme.typography.titleMedium)
                 val activeSources = island.sourcesById.values.filter {
                     it.lifecycle == IslandLifecycle.ACTIVE || it.lifecycle == IslandLifecycle.STALE
                 }
@@ -448,20 +445,19 @@ private fun PrototypeScreen(
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Device signals", style = MaterialTheme.typography.titleMedium)
+                Text("Charging and flashlight", style = MaterialTheme.typography.titleMedium)
                 Text("Battery: ${signals.batteryPercent?.let { "$it%" } ?: "unavailable"}${when {
                     signals.batteryFull == true -> " · full"
                     signals.charging == true -> " · charging"
                     else -> ""
                 }}")
-                Text("Ringer: ${when (signals.ringerMode) { 0 -> "silent"; 1 -> "vibrate"; 2 -> "normal"; else -> "unavailable" }}")
                 Text("Torch: ${when (signals.torchEnabled) { true -> "on"; false -> "off"; null -> if (signals.torchAvailable == false) "unavailable" else "unknown" }}")
-                Text("Show a source only while its direct device signal is active. These switches observe status; they do not control charging or the torch.", style = MaterialTheme.typography.bodySmall)
+                Text("Show a pill while charging or using the flashlight. These switches only choose what appears; they do not change either setting.", style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = { onChargingSourceEnabled(!chargingSourceEnabled) }) {
                     Text(if (chargingSourceEnabled) "Hide charging activity" else "Show charging activity")
                 }
                 OutlinedButton(onClick = { onTorchSourceEnabled(!torchSourceEnabled) }) {
-                    Text(if (torchSourceEnabled) "Hide torch activity" else "Show torch activity")
+                    Text(if (torchSourceEnabled) "Hide flashlight activity" else "Show flashlight activity")
                 }
             }
         }
@@ -470,7 +466,16 @@ private fun PrototypeScreen(
             Text(message, color = MaterialTheme.colorScheme.error)
         }
 
-        Text("APK preview · native Android surfaces remain authoritative", style = MaterialTheme.typography.bodySmall)
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
+                Text("Media listener: ${if (listenerConnected) "connected" else "disconnected"} · feed: ${mediaAccess.name.lowercase()}")
+                Text("Ringer: ${when (signals.ringerMode) { 0 -> "silent"; 1 -> "vibrate"; 2 -> "normal"; else -> "unavailable" }}")
+                Text("Ordering: ${island.policyVersion} · ${island.policyLabel}")
+                Text(geometry)
+            }
+        }
+        Text("Android preview · system status and lock screen remain under Android's control", style = MaterialTheme.typography.bodySmall)
     }
 }
 
