@@ -9,7 +9,7 @@
 | Feature | In the app |
 | --- | --- |
 | Timers | Start several independent countdowns with a preset or a custom name and duration. Pause, resume or clear each one in the app or its notification. Running timers retain their deadlines if the app process closes. |
-| Island window | Pick an activity, then show a compact pill. Tap it to expand or collapse; long press to stop the window. Up to three sources appear at once, with more retained in the queue. |
+| Island window | Pick an activity, then show a compact pill. Tap it to expand or collapse; expanded timers have Pause, Resume and Clear controls. Long press to stop the window. Up to three sources appear at once, with more retained in the queue. |
 | Media | Opt in to media-session discovery, then choose which observed apps may appear. The dashboard offers playback buttons only when the active session advertises those actions. |
 | Device status | View battery, ringer and torch state without giving the app control of those settings. |
 

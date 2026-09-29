@@ -9,9 +9,11 @@ import android.graphics.RectF
 import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -125,8 +127,11 @@ internal object OverlayController {
         else -> 220
     }
 
-    private fun heightFor(snapshot: IslandSnapshot): Int =
-        if (snapshot.presentation == IslandPresentation.EXPANDED) 100 else 52
+    private fun heightFor(snapshot: IslandSnapshot): Int {
+        if (snapshot.presentation != IslandPresentation.EXPANDED) return 52
+        val selected = snapshot.selectedId?.let(snapshot.sourcesById::get)
+        return if (selected?.kind == IslandSourceKind.TIMER) 132 else 100
+    }
 
     private fun IslandSnapshot.selectedSourceNeedsCaptureProtection(): Boolean =
         selectedId?.let(sourcesById::get)?.kind == IslandSourceKind.MEDIA
@@ -156,11 +161,38 @@ internal object OverlayController {
 }
 
 internal class IslandPillView(context: Context) : View(context) {
+    private enum class TimerAction {
+        PAUSE,
+        RESUME,
+        CLEAR,
+    }
+
+    private data class TimerActionTarget(
+        val action: TimerAction,
+        val timerId: String,
+        val label: String,
+        val bounds: RectF,
+    )
+
+    private companion object {
+        // Kept outside the framework action range and stable for this single accessibility node.
+        const val ACCESSIBILITY_TIMER_TOGGLE = 0x6f010001
+        const val ACCESSIBILITY_TIMER_CLEAR = 0x6f010002
+    }
+
     var onToggle: (() -> Unit)? = null
     private var snapshot = IslandStateEngine.snapshot
+    private var touchDownAction: TimerActionTarget? = null
+    private var touchLongPressPerformed = false
 
     private val body = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
     private val bounds = RectF()
+    private val actionBody = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(34, 40, 44) }
+    private val actionOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(70, 91, 94)
+        style = Paint.Style.STROKE
+        strokeWidth = context.dp(1).toFloat()
+    }
     private val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(96, 218, 208) }
     private val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -171,11 +203,45 @@ internal class IslandPillView(context: Context) : View(context) {
         color = Color.rgb(180, 190, 195)
         textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 11f, resources.displayMetrics)
     }
+    private val actionText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12f, resources.displayMetrics)
+        isFakeBoldText = true
+        textAlign = Paint.Align.CENTER
+    }
 
     init {
         isClickable = true
         contentDescription = "Island activity"
+        accessibilityDelegate = object : AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                val targets = timerActionTargets()
+                targets.firstOrNull { it.action == TimerAction.PAUSE || it.action == TimerAction.RESUME }
+                    ?.let { target ->
+                        info.addAction(
+                            AccessibilityNodeInfo.AccessibilityAction(
+                                ACCESSIBILITY_TIMER_TOGGLE,
+                                "${target.label} timer",
+                            ),
+                        )
+                    }
+                if (targets.any { it.action == TimerAction.CLEAR }) {
+                    info.addAction(
+                        AccessibilityNodeInfo.AccessibilityAction(ACCESSIBILITY_TIMER_CLEAR, "Clear timer"),
+                    )
+                }
+            }
+
+            override fun performAccessibilityAction(host: View, action: Int, args: android.os.Bundle?): Boolean =
+                when (action) {
+                    ACCESSIBILITY_TIMER_TOGGLE -> performTimerToggleAction() || super.performAccessibilityAction(host, action, args)
+                    ACCESSIBILITY_TIMER_CLEAR -> performTimerClearAction() || super.performAccessibilityAction(host, action, args)
+                    else -> super.performAccessibilityAction(host, action, args)
+                }
+        }
         setOnLongClickListener {
+            touchLongPressPerformed = true
             IslandRuntime.changeOverlayEnabled(false)
             true
         }
@@ -185,7 +251,20 @@ internal class IslandPillView(context: Context) : View(context) {
         snapshot = value
         val selected = value.selectedId?.let(value.sourcesById::get)
         val state = if (value.presentation == IslandPresentation.EXPANDED) "expanded" else "compact"
-        contentDescription = "${selected?.title ?: "Island"}, $state. Double tap to change size. Long press to stop."
+        val timerActions = timerActionTargets()
+        contentDescription = buildString {
+            append("${selected?.title ?: "Island"}, $state.")
+            if (timerActions.isNotEmpty()) {
+                append(" Timer controls: ")
+                append(timerActions.joinToString(", ") { "${it.label} timer" })
+                append(". Double tap outside the controls to collapse.")
+            } else if (state == "expanded") {
+                append(" Double tap to collapse.")
+            } else {
+                append(" Double tap to expand.")
+            }
+            append(" Long press to stop.")
+        }
         invalidate()
     }
 
@@ -196,7 +275,8 @@ internal class IslandPillView(context: Context) : View(context) {
         canvas.drawRoundRect(bounds, radius, radius, body)
         val expanded = snapshot.presentation == IslandPresentation.EXPANDED
         val selected = snapshot.selectedId?.let(snapshot.sourcesById::get)
-        val centerY = if (expanded) height * 0.36f else height / 2f
+        val hasTimerActions = timerActionTargets().isNotEmpty()
+        val centerY = if (expanded && hasTimerActions) height * 0.30f else if (expanded) height * 0.36f else height / 2f
         canvas.drawCircle(context.dp(25).toFloat(), centerY, context.dp(5).toFloat(), accent)
         val textX = context.dp(42).toFloat()
         val titleText = if (!expanded && selected?.kind == IslandSourceKind.TIMER) {
@@ -212,18 +292,141 @@ internal class IslandPillView(context: Context) : View(context) {
             canvas.drawText(
                 fitText(selected?.detail ?: "Activity in progress", detail, width - textX - context.dp(16)),
                 textX,
-                height * 0.68f,
+                if (hasTimerActions) height * 0.49f else height * 0.68f,
                 detail,
             )
+            if (hasTimerActions) drawTimerActions(canvas)
         } else if (snapshot.visibleIds.size > 1) {
             canvas.drawText("+${snapshot.visibleIds.size - 1}", width - context.dp(28).toFloat(), centerY, detail)
         }
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                touchDownAction = timerActionAt(event.x, event.y)
+                touchLongPressPerformed = false
+            }
+            MotionEvent.ACTION_UP -> {
+                val downAction = touchDownAction
+                touchDownAction = null
+                if (downAction != null && !touchLongPressPerformed) {
+                    val upAction = timerActionAt(event.x, event.y)
+                    val cancelEvent = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                    try {
+                        super.onTouchEvent(cancelEvent)
+                    } finally {
+                        cancelEvent.recycle()
+                    }
+                    cancelLongPress()
+
+                    if (upAction?.action == downAction.action && upAction.timerId == downAction.timerId &&
+                        performTimerAction(downAction.action, downAction.timerId)
+                    ) {
+                        // Send the standard click feedback/event without routing through this view's
+                        // toggle action. The synthetic cancel above prevents View from posting a
+                        // delayed performClick for the original touch sequence.
+                        super.performClick()
+                    }
+                    touchLongPressPerformed = false
+                    return true
+                }
+                touchDownAction = null
+                touchLongPressPerformed = false
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                touchDownAction = null
+                touchLongPressPerformed = false
+            }
+        }
+        return super.onTouchEvent(event)
     }
 
     override fun performClick(): Boolean {
         super.performClick()
         onToggle?.invoke()
         return true
+    }
+
+    private fun drawTimerActions(canvas: Canvas) {
+        for (target in timerActionTargets()) {
+            val radius = target.bounds.height() / 2f
+            canvas.drawRoundRect(target.bounds, radius, radius, actionBody)
+            canvas.drawRoundRect(target.bounds, radius, radius, actionOutline)
+            val baseline = target.bounds.centerY() - (actionText.ascent() + actionText.descent()) / 2f
+            canvas.drawText(target.label, target.bounds.centerX(), baseline, actionText)
+        }
+    }
+
+    private fun timerActionTargets(): List<TimerActionTarget> {
+        val timer = selectedTimer() ?: return emptyList()
+        if (snapshot.presentation != IslandPresentation.EXPANDED || snapshot.expandedSourceId != snapshot.selectedId) {
+            return emptyList()
+        }
+
+        val top = (height.takeIf { it > 0 } ?: context.dp(132)) - context.dp(56)
+        val bottom = (height.takeIf { it > 0 } ?: context.dp(132)) - context.dp(4)
+        val left = context.dp(8).toFloat()
+        val right = (width.takeIf { it > 0 } ?: context.dp(304)) - context.dp(8).toFloat()
+        val clearWidth = context.dp(84).toFloat()
+        val gap = context.dp(8).toFloat()
+        val clearLeft = if (timer.state == TimerState.FINISHED) left else right - clearWidth
+        val targets = mutableListOf<TimerActionTarget>()
+
+        when (timer.state) {
+            TimerState.RUNNING -> targets += TimerActionTarget(
+                TimerAction.PAUSE,
+                timer.id,
+                "Pause",
+                RectF(left, top.toFloat(), clearLeft - gap, bottom.toFloat()),
+            )
+            TimerState.PAUSED -> targets += TimerActionTarget(
+                TimerAction.RESUME,
+                timer.id,
+                "Resume",
+                RectF(left, top.toFloat(), clearLeft - gap, bottom.toFloat()),
+            )
+            TimerState.FINISHED -> Unit
+        }
+        targets += TimerActionTarget(
+            TimerAction.CLEAR,
+            timer.id,
+            "Clear",
+            RectF(clearLeft, top.toFloat(), right, bottom.toFloat()),
+        )
+        return targets
+    }
+
+    private fun selectedTimer(): TimerSnapshot? {
+        val sourceId = snapshot.selectedId ?: return null
+        val source = snapshot.sourcesById[sourceId] ?: return null
+        if (source.kind != IslandSourceKind.TIMER || !sourceId.startsWith("timer:")) return null
+        val timerId = sourceId.removePrefix("timer:").takeIf(String::isNotBlank) ?: return null
+        return IslandRuntime.timerSnapshots.firstOrNull { it.id == timerId }
+    }
+
+    private fun timerActionAt(x: Float, y: Float): TimerActionTarget? =
+        timerActionTargets().firstOrNull { it.bounds.contains(x, y) }
+
+    private fun performTimerToggleAction(): Boolean {
+        val action = timerActionTargets().firstOrNull {
+            it.action == TimerAction.PAUSE || it.action == TimerAction.RESUME
+        }?.action ?: return false
+        return performTimerAction(action)
+    }
+
+    private fun performTimerClearAction(): Boolean = performTimerAction(TimerAction.CLEAR)
+
+    private fun performTimerAction(action: TimerAction, expectedTimerId: String? = null): Boolean {
+        val timer = selectedTimer() ?: return false
+        if (expectedTimerId != null && timer.id != expectedTimerId) return false
+        val performed = when (action) {
+            TimerAction.PAUSE -> timer.state == TimerState.RUNNING && IslandRuntime.pauseTimer(timer.id)
+            TimerAction.RESUME -> timer.state == TimerState.PAUSED && IslandRuntime.resumeTimer(timer.id)
+            TimerAction.CLEAR -> IslandRuntime.cancelTimer(timer.id)
+        }
+        if (performed) render(IslandStateEngine.snapshot)
+        return performed
     }
 
     private fun Context.dp(value: Int): Int =
