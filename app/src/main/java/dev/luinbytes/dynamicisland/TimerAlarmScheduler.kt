@@ -22,7 +22,9 @@ data class AlarmState(
     val scheduledAlarmCount: Int,
     val exactAlarmAccess: Boolean,
     val inexactFallbackUsed: Boolean,
+    val alertsEnabled: Boolean,
     val notificationsAvailable: Boolean,
+    val persistenceHealthy: Boolean,
     val message: String,
 )
 
@@ -36,15 +38,17 @@ internal enum class TimerNotificationAction {
 /**
  * Schedules app-owned timer completion broadcasts and maintains one notification per timer.
  *
- * API 31+ uses exact alarms only while [AlarmManager.canScheduleExactAlarms] is true. Otherwise
- * this uses [AlarmManager.setAndAllowWhileIdle], which is inexact and may be delayed by doze or
- * system alarm limits. Notifications use a low-importance channel and never change an existing
+ * API 31+ uses exact alarms only while [AlarmManager.canScheduleExactAlarms] is true, with a
+ * separate inexact backup that survives exact-alarm access revocation. Otherwise this uses
+ * [AlarmManager.setAndAllowWhileIdle], which may be delayed by doze or system alarm limits.
+ * Notifications use a low-importance channel and never change an existing
  * channel's settings. This class only reads permission state; it never requests permissions.
  */
 object TimerAlarmScheduler {
     private data class SchedulerRecord(
         val knownOrders: MutableMap<String, Long> = linkedMapOf(),
         val completionAttempts: MutableSet<Long> = linkedSetOf(),
+        val pausedNotificationGenerations: MutableMap<Long, Long> = linkedMapOf(),
     )
 
     private data class NotificationAccess(
@@ -59,6 +63,7 @@ object TimerAlarmScheduler {
     fun reconcile(context: Context, snapshots: List<TimerSnapshot>): AlarmState = synchronized(lock) {
         val appContext = context.applicationContext
         val alarmManager = appContext.getSystemService(AlarmManager::class.java)
+        val alertsOptIn = alertsEnabled(appContext)
         val notificationAccess = notificationAccess(appContext)
         val record = readRecord(appContext)
         val byId = snapshots.associateBy(TimerSnapshot::id)
@@ -66,20 +71,60 @@ object TimerAlarmScheduler {
         val removedIds = record.knownOrders.keys - currentOrders.keys
         for (id in removedIds) {
             cancelAlarm(appContext, alarmManager, id)
-            record.knownOrders[id]?.let { cancelTimerNotification(notificationAccess.manager, it) }
+            record.knownOrders[id]?.let { order ->
+                cancelTimerNotification(notificationAccess.manager, order)
+                record.pausedNotificationGenerations.remove(order)
+            }
             record.knownOrders.remove(id)
         }
 
         val exactAccess = alarmManager != null && canUseExactAlarms(alarmManager)
+        val running = snapshots.count { it.state == TimerState.RUNNING }
+        // Record an identity before creating its alarm or notification. A failed commit must not
+        // leave a resource that a later Clear cannot discover and cancel after process death.
+        record.knownOrders.clear()
+        record.knownOrders.putAll(currentOrders)
+        val retainedOrders = currentOrders.values.toSet()
+        record.completionAttempts.retainAll(retainedOrders)
+        record.pausedNotificationGenerations.keys.retainAll(retainedOrders)
+        if (!writeRecord(appContext, record)) {
+            // Repository actions are already durable. Even without a new scheduler record, remove
+            // resources that now contradict a pause, completion, or alert opt-out. Keep existing
+            // alarms for still-running timers so a transient storage failure cannot drop wakeups.
+            for (timer in snapshots) {
+                if (timer.state != TimerState.RUNNING || timer.remainingMillis <= 0L) {
+                    cancelAlarm(appContext, alarmManager, timer.id)
+                }
+                if (!alertsOptIn || timer.state != TimerState.RUNNING ||
+                    timer.createdOrder in record.pausedNotificationGenerations
+                ) {
+                    cancelTimerNotification(notificationAccess.manager, timer.createdOrder)
+                }
+            }
+            return@synchronized AlarmState(
+                runningTimerCount = running,
+                scheduledAlarmCount = 0,
+                exactAlarmAccess = exactAccess,
+                inexactFallbackUsed = false,
+                alertsEnabled = alertsOptIn,
+                notificationsAvailable = notificationAccess.available,
+                persistenceHealthy = false,
+                message = "Timer alarm identities could not be persisted; retrying while the app is open",
+            )
+        }
+
         var exactAllowedForCalls = exactAccess
         var fallbackUsed = false
         var scheduled = 0
         var notificationsFailed = false
-        val running = snapshots.count { it.state == TimerState.RUNNING }
 
         for (timer in snapshots) {
+            if (!alertsOptIn) {
+                cancelTimerNotification(notificationAccess.manager, timer.createdOrder)
+            }
             when (timer.state) {
                 TimerState.RUNNING -> {
+                    record.pausedNotificationGenerations.remove(timer.createdOrder)
                     if (timer.remainingMillis <= 0L) {
                         cancelAlarm(appContext, alarmManager, timer.id)
                         cancelTimerNotification(notificationAccess.manager, timer.createdOrder)
@@ -111,13 +156,19 @@ object TimerAlarmScheduler {
                 TimerState.PAUSED -> {
                     cancelAlarm(appContext, alarmManager, timer.id)
                     if (notificationAccess.available && notificationAccess.manager != null) {
-                        if (!postPausedNotification(appContext, notificationAccess.manager, timer)) {
-                            notificationsFailed = true
+                        val alreadyPosted = record.pausedNotificationGenerations[timer.createdOrder] == timer.actionGeneration
+                        if (!alreadyPosted || hasActiveTimerNotification(notificationAccess.manager, timer.createdOrder)) {
+                            if (postPausedNotification(appContext, notificationAccess.manager, timer)) {
+                                record.pausedNotificationGenerations[timer.createdOrder] = timer.actionGeneration
+                            } else {
+                                notificationsFailed = true
+                            }
                         }
                     }
                 }
 
                 TimerState.FINISHED -> {
+                    record.pausedNotificationGenerations.remove(timer.createdOrder)
                     cancelAlarm(appContext, alarmManager, timer.id)
                     if (timer.createdOrder !in record.completionAttempts) {
                         cancelTimerNotification(notificationAccess.manager, timer.createdOrder)
@@ -144,10 +195,6 @@ object TimerAlarmScheduler {
             }
         }
 
-        record.knownOrders.clear()
-        record.knownOrders.putAll(currentOrders)
-        val retainedOrders = currentOrders.values.toSet()
-        record.completionAttempts.retainAll(retainedOrders)
         val recordStored = writeRecord(appContext, record)
 
         val messages = buildList {
@@ -164,7 +211,9 @@ object TimerAlarmScheduler {
             scheduledAlarmCount = scheduled,
             exactAlarmAccess = exactAccess,
             inexactFallbackUsed = fallbackUsed,
+            alertsEnabled = alertsOptIn,
             notificationsAvailable = notificationAccess.available && !notificationsFailed,
+            persistenceHealthy = recordStored,
             message = messages.joinToString(" · "),
         )
     }
@@ -180,7 +229,10 @@ object TimerAlarmScheduler {
         if (timer.createdOrder in record.completionAttempts) return@synchronized false
 
         val access = notificationAccess(appContext)
-        record.knownOrders[timer.id] = timer.createdOrder
+        if (record.knownOrders[timer.id] != timer.createdOrder) {
+            record.knownOrders[timer.id] = timer.createdOrder
+            if (!writeRecord(appContext, record)) return@synchronized false
+        }
         val posted = attemptCompletion(appContext, timer, access, record)
         writeRecord(appContext, record)
         posted
@@ -210,6 +262,14 @@ object TimerAlarmScheduler {
         )
     }
 
+    internal fun setAlertsEnabled(context: Context, enabled: Boolean): Boolean =
+        context.applicationContext.getSharedPreferences(SETTINGS_PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_ALERTS_ENABLED, enabled).commit()
+
+    private fun alertsEnabled(context: Context): Boolean =
+        context.getSharedPreferences(SETTINGS_PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_ALERTS_ENABLED, false)
+
     private enum class AlarmDelivery { EXACT, INEXACT }
 
     private fun scheduleAlarm(
@@ -218,19 +278,27 @@ object TimerAlarmScheduler {
         timer: TimerSnapshot,
         exactAllowed: Boolean,
     ): AlarmDelivery {
-        val pendingIntent = checkNotNull(timerPendingIntent(context, timer.id, create = true))
         val nowElapsed = SystemClock.elapsedRealtime()
         val remaining = timer.remainingMillis.coerceAtLeast(1L)
         val trigger = if (remaining > Long.MAX_VALUE - nowElapsed) Long.MAX_VALUE else nowElapsed + remaining
         if (exactAllowed) {
+            // Android cancels queued exact alarms and stops this process when exact access is
+            // revoked. Keep an independent inexact alarm already in the system for that case.
+            val backup = checkNotNull(timerPendingIntent(context, timer.id, create = true, backup = true))
+            manager.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, backup)
             try {
-                manager.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pendingIntent)
+                val exact = checkNotNull(timerPendingIntent(context, timer.id, create = true))
+                manager.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, exact)
                 return AlarmDelivery.EXACT
             } catch (_: RuntimeException) {
-                // Exact-alarm access can change between the capability check and scheduling.
+                // Exact access can change between the check and call; the backup remains queued.
+                cancelAlarmVariant(context, manager, timer.id, backup = false)
+                return AlarmDelivery.INEXACT
             }
         }
+        val pendingIntent = checkNotNull(timerPendingIntent(context, timer.id, create = true))
         manager.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pendingIntent)
+        cancelAlarmVariant(context, manager, timer.id, backup = true)
         return AlarmDelivery.INEXACT
     }
 
@@ -246,15 +314,21 @@ object TimerAlarmScheduler {
         }
 
     private fun cancelAlarm(context: Context, manager: AlarmManager?, timerId: String) {
-        val pendingIntent = timerPendingIntent(context, timerId, create = false) ?: return
+        for (backup in listOf(false, true)) {
+            cancelAlarmVariant(context, manager, timerId, backup)
+        }
+    }
+
+    private fun cancelAlarmVariant(context: Context, manager: AlarmManager?, timerId: String, backup: Boolean) {
+        val pendingIntent = timerPendingIntent(context, timerId, create = false, backup = backup) ?: return
         manager?.cancel(pendingIntent)
         pendingIntent.cancel()
     }
 
-    private fun timerPendingIntent(context: Context, timerId: String, create: Boolean): PendingIntent? {
+    private fun timerPendingIntent(context: Context, timerId: String, create: Boolean, backup: Boolean = false): PendingIntent? {
         val data = Uri.Builder()
             .scheme("dynamicisland")
-            .authority("timer")
+            .authority(if (backup) "timer-backup" else "timer")
             .appendPath(timerId)
             .build()
         val intent = Intent(context, TimerAlarmReceiver::class.java)
@@ -271,6 +345,9 @@ object TimerAlarmScheduler {
     private fun notificationAccess(context: Context): NotificationAccess {
         val manager = context.getSystemService(NotificationManager::class.java)
             ?: return NotificationAccess(null, false, "Notification service unavailable")
+        if (!alertsEnabled(context)) {
+            return NotificationAccess(manager, false, "Timer alerts are off")
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -361,7 +438,9 @@ object TimerAlarmScheduler {
             .authority("timer-details")
             .appendPath(timer.id)
             .build()
-        val intent = Intent(context, MainActivity::class.java).setData(data)
+        val intent = Intent(context, MainActivity::class.java)
+            .setData(data)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(
             context,
             notificationId(timer.createdOrder),
@@ -470,7 +549,15 @@ object TimerAlarmScheduler {
                 val order = completed.optLong(index, 0L)
                 if (order > 0L) attempts += order
             }
-            SchedulerRecord(orders, attempts)
+            val paused = root.optJSONObject(JSON_PAUSED_NOTIFICATION_GENERATIONS) ?: JSONObject()
+            val pausedGenerations = linkedMapOf<Long, Long>()
+            val pausedKeys = paused.keys()
+            while (pausedKeys.hasNext()) {
+                val order = pausedKeys.next().toLongOrNull() ?: continue
+                val generation = paused.optLong(order.toString(), -1L)
+                if (order > 0L && generation >= 0L) pausedGenerations[order] = generation
+            }
+            SchedulerRecord(orders, attempts, pausedGenerations)
         } catch (_: Exception) {
             SchedulerRecord()
         }
@@ -481,9 +568,14 @@ object TimerAlarmScheduler {
         for ((id, order) in record.knownOrders) known.put(id, order)
         val attempts = JSONArray()
         record.completionAttempts.sorted().forEach(attempts::put)
+        val paused = JSONObject()
+        for ((order, generation) in record.pausedNotificationGenerations) {
+            paused.put(order.toString(), generation)
+        }
         val encoded = JSONObject()
             .put(JSON_KNOWN_ORDERS, known)
             .put(JSON_COMPLETION_ATTEMPTS, attempts)
+            .put(JSON_PAUSED_NOTIFICATION_GENERATIONS, paused)
             .toString()
         return context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
             .edit()
@@ -495,6 +587,8 @@ object TimerAlarmScheduler {
     internal const val ACTION_TIMER_NOTIFICATION = "dev.luinbytes.dynamicisland.action.TIMER_NOTIFICATION"
     private const val PREFERENCES_NAME = "timer_alarm_scheduler_v1"
     private const val KEY_RECORD = "record"
+    private const val SETTINGS_PREFERENCES_NAME = "island_settings_v1"
+    private const val KEY_ALERTS_ENABLED = "timer_alerts_enabled"
     private const val CHANNEL_ID = "app_owned_timers"
     private const val CHANNEL_NAME = "Timers"
     private const val NOTIFICATION_ID_BASE = 500_000_000
@@ -502,4 +596,5 @@ object TimerAlarmScheduler {
 
     private const val JSON_KNOWN_ORDERS = "knownOrders"
     private const val JSON_COMPLETION_ATTEMPTS = "completionAttempts"
+    private const val JSON_PAUSED_NOTIFICATION_GENERATIONS = "pausedNotificationGenerations"
 }

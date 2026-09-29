@@ -49,16 +49,33 @@ import androidx.compose.ui.unit.dp
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+    private companion object {
+        const val NOTIFICATION_PERMISSION_PREFS = "notification_permission_history"
+        const val KEY_POST_NOTIFICATIONS_REQUESTED = "post_notifications_requested"
+        const val KEY_PENDING_SPECIAL_ACCESS = "pending_special_access"
+    }
+
     private var overlayGranted by mutableStateOf(false)
     private var listenerGranted by mutableStateOf(false)
     private var message by mutableStateOf<String?>(null)
     private var openedTimerId by mutableStateOf<String?>(null)
+    private var restrictedSettingsHint by mutableStateOf<String?>(null)
+    private var restrictedSettingsForListener by mutableStateOf(false)
+    private var pendingSpecialAccessSettings: String? = null
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { IslandRuntime.reconcileTimerAlarms() }
+    ) { granted ->
+        if (granted) {
+            setTimerAlertsEnabled(true)
+        } else {
+            IslandRuntime.reconcileTimerAlarms()
+            message = "Timer alerts remain off. If Android no longer offers the permission prompt, tap Enable timer alerts again to open app notification settings."
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingSpecialAccessSettings = savedInstanceState?.getString(KEY_PENDING_SPECIAL_ACCESS)
         if (IslandRuntime.mediaEnabled) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         selectTimerFromIntent(intent)
         setContent {
@@ -91,6 +108,10 @@ class MainActivity : ComponentActivity() {
                         allowedMediaPackages = IslandRuntime.allowedMediaPackages,
                         message = message,
                         onOpenOverlaySettings = ::openOverlaySettings,
+                        onOpenAppInfoSettings = ::openAppInfoSettings,
+                        restrictedSettingsHint = restrictedSettingsHint,
+                        restrictedSettingsForListener = restrictedSettingsForListener,
+                        onOpenAppNotificationSettings = ::openAppNotificationSettings,
                         onStart = ::startPreview,
                         onStop = {
                             IslandRuntime.changeOverlayEnabled(false)
@@ -103,7 +124,10 @@ class MainActivity : ComponentActivity() {
                             IslandRuntime.cancelTimer(it)
                             if (openedTimerId == it) openedTimerId = null
                         },
-                        onEnableTimerNotifications = ::enableTimerNotifications,
+                        onChangeTimerAlertsEnabled = { enabled ->
+                            if (enabled) enableTimerNotifications()
+                            else setTimerAlertsEnabled(false)
+                        },
                         onOpenExactAlarmSettings = ::openExactAlarmSettings,
                         onSelectSource = {
                             IslandStateEngine.select(it)
@@ -129,11 +153,37 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(KEY_PENDING_SPECIAL_ACCESS, pendingSpecialAccessSettings)
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onResume() {
         super.onResume()
         overlayGranted = Settings.canDrawOverlays(this)
         listenerGranted = getSystemService(NotificationManager::class.java)
             .isNotificationListenerAccessGranted(ComponentName(this, IslandNotificationListener::class.java))
+        val returnedFromSpecialAccess = pendingSpecialAccessSettings
+        pendingSpecialAccessSettings = null
+        when (returnedFromSpecialAccess) {
+            "overlay" -> {
+                restrictedSettingsForListener = false
+                restrictedSettingsHint = if (!overlayGranted) {
+                    "Overlay access is still off. On some sideloaded installs, Android may require Allow restricted settings from this app's App info page before granting access."
+                } else {
+                    null
+                }
+            }
+            "listener" -> {
+                restrictedSettingsForListener = !listenerGranted
+                restrictedSettingsHint = if (!listenerGranted) {
+                    "Notification access is still off. On some sideloaded installs, Android may require Allow restricted settings from this app's App info page before granting access."
+                } else {
+                    null
+                }
+            }
+            null -> Unit
+        }
         IslandRuntime.reconcileTimerAlarms()
         IslandRuntime.reconcileMedia()
         message = IslandRuntime.refresh()
@@ -157,9 +207,23 @@ class MainActivity : ComponentActivity() {
 
     private fun openOverlaySettings() {
         try {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
+            pendingSpecialAccessSettings = "overlay"
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                data = Uri.parse("package:$packageName")
+            })
         } catch (_: ActivityNotFoundException) {
+            pendingSpecialAccessSettings = null
             message = "This device has no overlay Settings screen."
+        }
+    }
+
+    private fun openAppInfoSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            })
+        } catch (_: ActivityNotFoundException) {
+            message = "This device has no app info Settings screen."
         }
     }
 
@@ -175,8 +239,10 @@ class MainActivity : ComponentActivity() {
 
     private fun openListenerSettings() {
         try {
+            pendingSpecialAccessSettings = "listener"
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         } catch (_: ActivityNotFoundException) {
+            pendingSpecialAccessSettings = null
             message = "This device has no notification access Settings screen."
         }
     }
@@ -185,9 +251,38 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
+            val permissionPrefs = getSharedPreferences(NOTIFICATION_PERMISSION_PREFS, MODE_PRIVATE)
+            val requestedBefore = permissionPrefs.getBoolean(KEY_POST_NOTIFICATIONS_REQUESTED, false)
+            if (requestedBefore &&
+                !shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)
+            ) {
+                if (!setTimerAlertsEnabled(true)) return
+                message = "Android isn't offering the timer-alert permission prompt. Review this app's notification settings to enable alerts."
+                openAppNotificationSettings()
+                return
+            }
+            permissionPrefs.edit().putBoolean(KEY_POST_NOTIFICATIONS_REQUESTED, true).apply()
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             return
         }
+        if (!setTimerAlertsEnabled(true)) return
+        if (!getSystemService(NotificationManager::class.java).areNotificationsEnabled()) {
+            message = "Timer alerts are enabled in the app. Android's app notification setting is off; turn it on to receive alerts."
+            openAppNotificationSettings()
+        }
+    }
+
+    private fun setTimerAlertsEnabled(enabled: Boolean): Boolean {
+        val saved = IslandRuntime.changeTimerAlertsEnabled(enabled)
+        message = if (saved) {
+            if (enabled) "Timer alerts enabled." else "Timer alerts disabled."
+        } else {
+            "Could not save the timer-alert setting. Please try again."
+        }
+        return saved
+    }
+
+    private fun openAppNotificationSettings() {
         try {
             startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
                 putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
@@ -231,13 +326,17 @@ private fun PrototypeScreen(
     allowedMediaPackages: Set<String>,
     message: String?,
     onOpenOverlaySettings: () -> Unit,
+    onOpenAppInfoSettings: () -> Unit,
+    restrictedSettingsHint: String?,
+    restrictedSettingsForListener: Boolean,
+    onOpenAppNotificationSettings: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onStartTimer: (Long, String) -> Unit,
     onPauseTimer: (String) -> Unit,
     onResumeTimer: (String) -> Unit,
     onCancelTimer: (String) -> Unit,
-    onEnableTimerNotifications: () -> Unit,
+    onChangeTimerAlertsEnabled: (Boolean) -> Unit,
     onOpenExactAlarmSettings: () -> Unit,
     onSelectSource: (String) -> Unit,
     onEnableMedia: () -> Unit,
@@ -327,9 +426,18 @@ private fun PrototypeScreen(
                         alarmState.inexactFallbackUsed -> "inexact timing in use"
                         else -> "exact timing not allowed"
                     }}")
-                    Text(if (alarmState.notificationsAvailable) "Completion alerts: available" else "Completion alerts: unavailable")
-                    if (!alarmState.notificationsAvailable) {
-                        OutlinedButton(onClick = onEnableTimerNotifications) { Text("Enable timer alerts") }
+                    Text(when {
+                        !alarmState.alertsEnabled -> "Timer alerts: off"
+                        alarmState.notificationsAvailable -> "Timer alerts: on"
+                        else -> "Timer alerts: on, but unavailable in Android settings"
+                    })
+                    OutlinedButton(onClick = { onChangeTimerAlertsEnabled(!alarmState.alertsEnabled) }) {
+                        Text(if (alarmState.alertsEnabled) "Disable timer alerts" else "Enable timer alerts")
+                    }
+                    if (alarmState.alertsEnabled && !alarmState.notificationsAvailable) {
+                        OutlinedButton(onClick = onOpenAppNotificationSettings) {
+                            Text("Open notification settings")
+                        }
                     }
                     if (!alarmState.exactAlarmAccess) {
                         OutlinedButton(onClick = onOpenExactAlarmSettings) { Text("Allow exact timing") }
@@ -349,6 +457,10 @@ private fun PrototypeScreen(
                 if (!overlayGranted) {
                     Text("Open Android Settings and enable display over other apps for this app. Return here to recheck it.")
                     OutlinedButton(onClick = onOpenOverlaySettings) { Text("Open overlay settings") }
+                }
+                if (restrictedSettingsHint != null && (!restrictedSettingsForListener || !mediaEnabled)) {
+                    Text("$restrictedSettingsHint If installed from an APK, check the App info menu for Allow restricted settings if Android shows that option.")
+                    OutlinedButton(onClick = onOpenAppInfoSettings) { Text("Open app info") }
                 }
             }
         }
@@ -386,6 +498,10 @@ private fun PrototypeScreen(
                 }
                 if (mediaEnabled && !listenerGranted) {
                     Text("Grant notification access in Android Settings, then return. This is separate from overlay access.")
+                }
+                if (mediaEnabled && !listenerGranted && restrictedSettingsForListener && restrictedSettingsHint != null) {
+                    Text("$restrictedSettingsHint If installed from an APK, check the App info menu for Allow restricted settings if Android shows that option.")
+                    OutlinedButton(onClick = onOpenAppInfoSettings) { Text("Open app info") }
                 }
                 if (mediaEnabled && listenerConnected && mediaSessions.isEmpty()) Text("No published media sessions observed")
                 for (packageName in mediaPackages.sorted()) {

@@ -29,9 +29,11 @@ Keep active tasks in a small, expandable window near the top of your Android scr
 
 1. Install the [debug APK](#build-from-source) on an Android 11 or newer device and open **Island Prototype**.
 2. Start a timer. To show its pill over other apps, open **Overlay settings**, allow display over other apps for Island Prototype, return to the app and choose **Enable Island**.
-3. For timer notifications, choose **Enable timer alerts** and grant notification permission. **Allow exact timing** is optional; without it, Android may deliver completion later.
+3. For timer notifications, choose **Enable timer alerts** and grant notification permission. Alerts are off until you opt in, and **Disable timer alerts** turns them off again. **Allow exact timing** is optional; without it, Android may deliver completion later.
 4. To show media, choose **Enable media**, grant Android notification access in Settings, then allow each observed media app in the dashboard. You can disable media access or stop the Island window from the app at any time.
 5. To show charging or flashlight status in the pill, turn on either activity in **Device signals**. These are off by default and disappear when the corresponding signal ends.
+
+If overlay or media access remains unavailable after visiting Android Settings, open this app's **App info** from the Permissions card. On some sideloaded installs, Android offers **Allow restricted settings** in that page's menu; choose it, then return to the relevant access setting.
 
 Timer completion notifications are silent. The app does not play an alarm sound. If notifications are blocked when a timer finishes, its completion remains visible in the app but no old alert is sent after access returns. Android can delay inexact alarms, and a force-stop prevents alarm delivery until the app is reopened. The Island window closes when the screen turns off or the device locks; Android may also remove an app-owned overlay when its process stops. While media access is enabled, Android blocks ordinary screenshots and screen capture of this app's dashboard; the media pill is protected separately. Ordinary notifications are not automatically turned into activities.
 

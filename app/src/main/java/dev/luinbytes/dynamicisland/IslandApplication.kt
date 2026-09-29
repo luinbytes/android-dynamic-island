@@ -9,6 +9,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.os.PowerManager
 import androidx.compose.runtime.getValue
@@ -42,6 +44,8 @@ internal object IslandRuntime {
     private val timerRevisions = HashMap<String, Long>()
     private var previousTimerIds = emptySet<String>()
     private var previousTimerStates = emptyMap<String, TimerState>()
+    private val schedulerRetryHandler = Handler(Looper.getMainLooper())
+    private val schedulerRetry = Runnable { reconcileTimerAlarms() }
     private var initialized = false
     private var screenInteractive = true
     private var mediaAdapter: MediaSourceAdapter? = null
@@ -124,12 +128,26 @@ internal object IslandRuntime {
     fun cancelTimer(id: String): Boolean = timersRepository.cancel(id)
 
     fun reconcileTimerAlarms() {
-        alarmState = TimerAlarmScheduler.reconcile(appContext, timersRepository.snapshot())
+        reconcileTimerSnapshot(timersRepository.snapshot())
+    }
+
+    private fun reconcileTimerSnapshot(timers: List<TimerSnapshot>) {
+        alarmState = TimerAlarmScheduler.reconcile(appContext, timers)
+        schedulerRetryHandler.removeCallbacks(schedulerRetry)
+        if (alarmState?.persistenceHealthy == false) {
+            schedulerRetryHandler.postDelayed(schedulerRetry, 10_000L)
+        }
+    }
+
+    fun changeTimerAlertsEnabled(enabled: Boolean): Boolean {
+        if (!TimerAlarmScheduler.setAlertsEnabled(appContext, enabled)) return false
+        reconcileTimerAlarms()
+        return true
     }
 
     fun onTimerAlarm(context: Context, timerId: String) {
         val snapshots = timersRepository.snapshot()
-        alarmState = TimerAlarmScheduler.reconcile(context, snapshots)
+        reconcileTimerAlarms()
         snapshots.firstOrNull { it.id == timerId && it.state == TimerState.FINISHED }
             ?.let { TimerAlarmScheduler.postCompletion(context, it) }
     }
@@ -144,7 +162,7 @@ internal object IslandRuntime {
         val currentSnapshots = timersRepository.snapshot()
         val current = currentSnapshots.firstOrNull { it.id == timerId }
         if (current?.state != expectedState || current.actionGeneration != expectedGeneration) {
-            alarmState = TimerAlarmScheduler.reconcile(context, currentSnapshots)
+            reconcileTimerAlarms()
             return false
         }
         val changed = try {
@@ -159,7 +177,7 @@ internal object IslandRuntime {
         } catch (_: RuntimeException) {
             false
         }
-        if (!changed) alarmState = TimerAlarmScheduler.reconcile(context, timersRepository.snapshot())
+        if (!changed) reconcileTimerAlarms()
         return changed
     }
 
@@ -463,13 +481,13 @@ internal object IslandRuntime {
     private fun onTimersChanged(timers: List<TimerSnapshot>) {
         timerSnapshots = timers
         val currentStates = timers.associate { it.id to it.state }
+        val now = SystemClock.elapsedRealtime()
         if (currentStates != previousTimerStates) {
-            alarmState = TimerAlarmScheduler.reconcile(appContext, timers)
+            reconcileTimerSnapshot(timers)
             timers.filter { it.state == TimerState.FINISHED }
                 .forEach { TimerAlarmScheduler.postCompletion(appContext, it) }
             previousTimerStates = currentStates
         }
-        val now = SystemClock.elapsedRealtime()
         val ids = timers.mapTo(HashSet()) { it.id }
         for (timer in timers) {
             val revision = (timerRevisions[timer.id] ?: 0L) + 1L

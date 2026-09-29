@@ -260,7 +260,6 @@ class AppTimerRepository(context: Context) : Closeable {
                 nextCreatedOrder = maxOf(nextCreatedOrder, afterCreatedOrder)
                 val remaining = item.optLong(JSON_REMAINING, duration).coerceIn(0L, duration)
                 val deadline = item.optLong(JSON_DEADLINE, NO_DEADLINE)
-                val checkpointElapsed = item.optLong(JSON_CHECKPOINT_ELAPSED, 0L)
                 val savedBootCount = item.optInt(JSON_BOOT_COUNT, UNKNOWN_BOOT_COUNT)
                 val actionGeneration = item.optLong(JSON_ACTION_GENERATION, 0L).coerceAtLeast(0L)
 
@@ -275,10 +274,10 @@ class AppTimerRepository(context: Context) : Closeable {
                     deadlineElapsedMillis = NO_DEADLINE,
                 )
                 if (state == TimerState.RUNNING) {
-                    if (isSameBoot(savedBootCount, currentBootCount, checkpointElapsed, nowElapsed) && deadline >= 0L) {
+                    if (isSameBoot(savedBootCount, currentBootCount) && deadline >= 0L) {
                         timer.deadlineElapsedMillis = deadline
                         timer.remainingMillis = remainingAt(timer, nowElapsed)
-                    } else if (isSameBoot(savedBootCount, currentBootCount, checkpointElapsed, nowElapsed)) {
+                    } else if (isSameBoot(savedBootCount, currentBootCount)) {
                         // An invalid/missing monotonic deadline is not proof that this timer ended.
                         timer.state = TimerState.PAUSED
                         bumpActionGeneration(timer)
@@ -308,12 +307,13 @@ class AppTimerRepository(context: Context) : Closeable {
     private fun isSameBoot(
         savedBootCount: Int,
         currentBootCount: Int,
-        checkpointElapsed: Long,
-        nowElapsed: Long,
-    ): Boolean = when {
-        savedBootCount != UNKNOWN_BOOT_COUNT && currentBootCount != UNKNOWN_BOOT_COUNT ->
+    ): Boolean {
+        // Elapsed realtime alone cannot identify a boot: a reboot can already pass the prior
+        // checkpoint uptime before this process restores its state. Unknown counts therefore take
+        // the conservative recovery path and resume from the last persisted remaining duration.
+        return savedBootCount != UNKNOWN_BOOT_COUNT &&
+            currentBootCount != UNKNOWN_BOOT_COUNT &&
             savedBootCount == currentBootCount
-        else -> nowElapsed >= checkpointElapsed
     }
 
     private fun refreshExpiredTimers(nowElapsed: Long): Boolean {

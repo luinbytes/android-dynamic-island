@@ -7,10 +7,14 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
+import android.hardware.display.DisplayManager
 import android.media.session.PlaybackState
+import android.os.Handler
+import android.os.Looper
 import android.os.Bundle
 import android.provider.Settings
 import android.util.TypedValue
+import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -35,6 +39,8 @@ internal object OverlayController {
     private var manager: WindowManager? = null
     private var view: IslandPillView? = null
     private var params: WindowManager.LayoutParams? = null
+    private var displayManager: DisplayManager? = null
+    private var displayListener: DisplayManager.DisplayListener? = null
 
     fun show(context: Context): String? {
         if (running) return null
@@ -63,14 +69,21 @@ internal object OverlayController {
         }
 
         updatePosition(windowManager, layout, appContext)
-        return try {
+        try {
             windowManager.addView(pill, layout)
-            manager = windowManager
-            view = pill
-            params = layout
-            running = true
+        } catch (error: RuntimeException) {
+            geometry = "Overlay could not be shown"
+            return error.message ?: error.javaClass.simpleName
+        }
+        manager = windowManager
+        view = pill
+        params = layout
+        running = true
+        return try {
+            registerDisplayListener(appContext)
             null
         } catch (error: RuntimeException) {
+            stop()
             geometry = "Overlay could not be shown"
             error.message ?: error.javaClass.simpleName
         }
@@ -107,6 +120,17 @@ internal object OverlayController {
     }
 
     fun stop() {
+        val listener = displayListener
+        val displays = displayManager
+        displayListener = null
+        displayManager = null
+        if (listener != null && displays != null) {
+            try {
+                displays.unregisterDisplayListener(listener)
+            } catch (_: RuntimeException) {
+                // A listener that is already unregistered needs no further cleanup.
+            }
+        }
         val pill = view
         if (pill != null) {
             try {
@@ -120,6 +144,22 @@ internal object OverlayController {
         manager = null
         running = false
         geometry = "No overlay window"
+    }
+
+    private fun registerDisplayListener(context: Context) {
+        val displays = context.getSystemService(DisplayManager::class.java)
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = Unit
+
+            override fun onDisplayRemoved(displayId: Int) = Unit
+
+            override fun onDisplayChanged(displayId: Int) {
+                if (displayId == Display.DEFAULT_DISPLAY) refresh(context)
+            }
+        }
+        displays.registerDisplayListener(listener, Handler(Looper.getMainLooper()))
+        displayManager = displays
+        displayListener = listener
     }
 
     private fun toggle() {
@@ -154,9 +194,12 @@ internal object OverlayController {
         val centerX = metrics.bounds.centerX()
         val pillLeft = centerX - layout.width / 2
         val pillRight = pillLeft + layout.width
-        val cutoutBottom = insets.displayCutout?.boundingRects
-            ?.filter { it.left < pillRight && it.right > pillLeft }
-            ?.maxOfOrNull { it.bottom } ?: 0
+        val topCutout = insets.displayCutout?.boundingRectTop
+        val cutoutBottom = if (topCutout != null && topCutout.left < pillRight && topCutout.right > pillLeft) {
+            topCutout.bottom
+        } else {
+            0
+        }
         // The application-overlay area begins below the status bar on the Samsung probe.
         // Only the cutout's excess below that area needs an additional offset.
         layout.y = maxOf(0, cutoutBottom - statusTop) + context.dp(8)
