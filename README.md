@@ -1,8 +1,20 @@
+<div align="center">
+
+![Island for Android: a compact timer pill expanding into a timer card](docs/assets/island-cover.svg)
+
+<sub>Preview illustration. Window placement and appearance vary by Android device.</sub>
+
 # Island for Android
 
-**A live activity workspace for Android.** Keep your timers and permitted media sessions close at hand in a small, expandable window near the top of the screen.
+**Timers and permitted media sessions, close at hand.**
 
-> **Preview build:** This is an installable Android app in active development. It uses Android's display-over-other-apps window and keeps Android's status bar, notification shade, privacy indicators and lock screen in control.
+[Get started](#get-started) · [What you can do](#what-you-can-do) · [Current scope](#current-scope)
+
+</div>
+
+Keep active tasks in a small, expandable window near the top of your Android screen.
+
+> **Preview build:** This app is in active development and currently builds from source. Its window uses Android's display-over-other-apps permission; Android keeps control of the status bar, notification shade, privacy indicators and lock screen.
 
 ## What you can do
 
@@ -40,7 +52,7 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
 ./gradlew --no-daemon --max-workers=1 :app:assembleDebug :app:lintDebug
 ```
 
-The APK is `app/build/outputs/apk/debug/app-debug.apk`. Its application ID is `dev.luinbytes.dynamicisland`, minimum API 30, target API 36. Pull requests assemble and lint on GitHub Actions. No release-signed package is published.
+The APK is `app/build/outputs/apk/debug/app-debug.apk`. Install it with `adb install app/build/outputs/apk/debug/app-debug.apk`. Its application ID is `dev.luinbytes.dynamicisland`, minimum API 30, target API 36. Pull requests assemble and lint on GitHub Actions. No release-signed package is published.
 
 ### Implementation and evidence
 
