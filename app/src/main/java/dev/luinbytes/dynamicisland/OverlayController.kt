@@ -97,7 +97,9 @@ internal object OverlayController {
         layout.width = pill.context.dp(if (pill.expanded) 304 else 220)
         layout.height = pill.context.dp(if (pill.expanded) 100 else 52)
         try {
-            manager?.updateViewLayout(pill, layout)
+            val windowManager = manager ?: return
+            updatePosition(windowManager, layout, pill.context)
+            windowManager.updateViewLayout(pill, layout)
         } catch (_: RuntimeException) {
             stop()
         }
@@ -108,9 +110,15 @@ internal object OverlayController {
         layout: WindowManager.LayoutParams,
         context: Context,
     ) {
-        val insets = windowManager.currentWindowMetrics.windowInsets
+        val metrics = windowManager.currentWindowMetrics
+        val insets = metrics.windowInsets
         val statusTop = insets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top
-        val cutoutBottom = insets.displayCutout?.boundingRects?.maxOfOrNull { it.bottom } ?: 0
+        val centerX = metrics.bounds.centerX()
+        val pillLeft = centerX - layout.width / 2
+        val pillRight = pillLeft + layout.width
+        val cutoutBottom = insets.displayCutout?.boundingRects
+            ?.filter { it.left < pillRight && it.right > pillLeft }
+            ?.maxOfOrNull { it.bottom } ?: 0
         // The application-overlay area begins below the status bar on the Samsung probe.
         // Only the cutout's excess below that area needs an additional offset.
         layout.y = maxOf(0, cutoutBottom - statusTop) + context.dp(8)
