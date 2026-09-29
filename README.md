@@ -1,27 +1,26 @@
-# Android Dynamic Island prototype
+# Android Dynamic Island
 
-This repository contains the [reference specification](REFERENCE_SPEC.md) and a first installable Android layout probe. The app is **not** a measured iPhone Dynamic Island recreation. It renders one provisional demo pill through `TYPE_APPLICATION_OVERLAY`; it does not read notifications, control other apps, or replace Android's status bar, privacy indicators, lock screen, or Live Update chip.
+This repository contains a [reference specification](REFERENCE_SPEC.md) and an installable Android APK implementation in progress. The current app draws a bounded `TYPE_APPLICATION_OVERLAY` for confirmed sources. Its source store supports up to three visible activities under a labeled Android approximation policy; this is **not** a measured iPhone Dynamic Island recreation or a replacement for Android's status bar, privacy indicators, notification shade, lock screen, or Live Update chip.
 
 ## Build
 
-The project uses JDK 17, Android SDK 36, Gradle 9.7.1 and Android Gradle Plugin 9.1.1. On this Mac mini, the JDK is installed through Homebrew but is not on the default shell PATH:
+The project uses JDK 17, Android SDK 36, Gradle 9.7.1 and Android Gradle Plugin 9.1.1. On this Mac mini:
 
 ```sh
 export JAVA_HOME="$(brew --prefix openjdk@17)"
 export ANDROID_HOME="$HOME/Library/Android/sdk"
-./gradlew --no-daemon --max-workers=1 :app:assembleDebug
+./gradlew --no-daemon --max-workers=1 :app:assembleDebug :app:lintDebug
 ```
 
-The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. The app ID is `dev.luinbytes.dynamicisland`, with minimum Android API 30 and target API 36. These are prototype build settings; the [Pixel Android 17 gate](docs/android/18-device-qualification.md) remains separate.
+The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. The app ID is `dev.luinbytes.dynamicisland`, with minimum Android API 30 and target API 36. Pull requests assemble and lint the APK on GitHub Actions.
 
-Pull requests run the same assembly and lint checks on a GitHub hosted Android SDK runner.
+## Current features
 
-## Use
+- **App-owned timers:** start multiple independent one-, five-, or ten-minute countdowns; pause, resume, and clear each by its stable ID. Deadlines use elapsed real time and restore after an app process restart. A reboot resumes from the last saved remaining time rather than inferring time while powered off.
+- **Island presentation:** choose a source and enable the bounded overlay after granting Android's separate display-over-other-apps access. Tap the pill to expand or collapse it; long-press to stop the overlay. Selection, source lifecycle, and presentation are separate in the state engine. Current geometry, content, and gestures are provisional until native reference capture.
+- **Media discovery:** optionally enable Android notification-listener access to read published media sessions. An observed app appears in diagnostics; the user must then allow that package before its session may enter the Island. Listener disconnect or access loss removes private session content. The app does not yet send publisher media commands or admit ordinary notifications as activities.
+- **Device diagnostics:** display read-only battery, ringer and torch facts. These facts do not automatically become Island activities or trigger device controls.
 
-1. Install and open **Island Prototype**. It starts with no overlay and asks for no notification access.
-2. Choose **Open overlay settings** and explicitly enable display over other apps for this app. Return to the app; it rechecks the grant.
-3. Choose **Show demo**. Tap the demo pill to expand or collapse it. Long-press the pill or choose **Stop** in the app to remove the window.
+The timer repository does not schedule an exact alarm or post a completion notification while the process is stopped. An Android media session is visible only when its publisher exposes it and listener access is connected; lack of an observed session is not proof a publisher task ended. The current overlay runs in the app process and Android may move, cover, or remove it. Stopping the overlay leaves the timer task state intact.
 
-The window is bounded and requests an offset for the cutout area beyond the status-bar inset. Its actual placement must be inspected on each Android build; the displayed inset values are diagnostics, not measured screen coordinates. Its dimensions, text, timing and gesture behavior are placeholders for device experiments. Android can move, hide or cover an application overlay. The demo is process-local and does not run a foreground service, so Android may remove it when the app process ends. Revoking overlay access and returning to the app also removes it.
-
-No real publisher adapter, notification listener, timer, SystemUI integration, or reference-matched contour is included yet. Follow the [implementation sequence](docs/verification/09-implementation-acceptance.md) and [comparison protocol](docs/verification/12-comparison-protocol.md) before claiming parity.
+No iPhone 18 Pro Max/iOS 27 native capture, Pixel 11 Pro XL/Android 17 physical qualification, or selected SystemUI build/recovery route is available. Follow the [implementation sequence](docs/verification/09-implementation-acceptance.md), [device qualification](docs/android/18-device-qualification.md), and [paired comparison protocol](docs/verification/12-comparison-protocol.md) before assigning a parity verdict.

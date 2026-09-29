@@ -16,7 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
-/** A process-local layout probe. It has no publisher data or background service. */
+/** Bounded APK renderer. Source truth lives in [IslandStateEngine], not in this window. */
 internal object OverlayController {
     var running by mutableStateOf(false)
         private set
@@ -24,19 +24,24 @@ internal object OverlayController {
         private set
 
     private var manager: WindowManager? = null
-    private var view: PreviewPillView? = null
+    private var view: IslandPillView? = null
     private var params: WindowManager.LayoutParams? = null
 
     fun show(context: Context): String? {
         if (running) return null
         if (!Settings.canDrawOverlays(context)) return "Draw over apps is not granted"
+        val snapshot = IslandStateEngine.snapshot
+        if (snapshot.selectedId == null) return "Start a source before showing the Island"
 
         val appContext = context.applicationContext
         val windowManager = appContext.getSystemService(WindowManager::class.java)
-        val pill = PreviewPillView(appContext).apply { onToggle = { toggle() } }
+        val pill = IslandPillView(appContext).apply {
+            render(snapshot)
+            onToggle = { toggle() }
+        }
         val layout = WindowManager.LayoutParams(
-            appContext.dp(220),
-            appContext.dp(52),
+            appContext.dp(widthFor(snapshot)),
+            appContext.dp(heightFor(snapshot)),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
@@ -63,9 +68,17 @@ internal object OverlayController {
             stop()
             return
         }
+        val snapshot = IslandStateEngine.snapshot
+        if (snapshot.selectedId == null) {
+            stop()
+            return
+        }
         val windowManager = manager ?: return
         val pill = view ?: return
         val layout = params ?: return
+        pill.render(snapshot)
+        layout.width = context.dp(widthFor(snapshot))
+        layout.height = context.dp(heightFor(snapshot))
         updatePosition(windowManager, layout, context)
         try {
             windowManager.updateViewLayout(pill, layout)
@@ -91,19 +104,19 @@ internal object OverlayController {
     }
 
     private fun toggle() {
-        val pill = view ?: return
-        val layout = params ?: return
-        pill.expanded = !pill.expanded
-        layout.width = pill.context.dp(if (pill.expanded) 304 else 220)
-        layout.height = pill.context.dp(if (pill.expanded) 100 else 52)
-        try {
-            val windowManager = manager ?: return
-            updatePosition(windowManager, layout, pill.context)
-            windowManager.updateViewLayout(pill, layout)
-        } catch (_: RuntimeException) {
-            stop()
-        }
+        val selected = IslandStateEngine.snapshot.selectedId ?: return
+        IslandStateEngine.setExpanded(selected, IslandStateEngine.snapshot.expandedSourceId != selected)
+        view?.let { refresh(it.context) }
     }
+
+    private fun widthFor(snapshot: IslandSnapshot): Int = when (snapshot.presentation) {
+        IslandPresentation.EXPANDED -> 304
+        IslandPresentation.MULTIPLE -> 258
+        else -> 220
+    }
+
+    private fun heightFor(snapshot: IslandSnapshot): Int =
+        if (snapshot.presentation == IslandPresentation.EXPANDED) 100 else 52
 
     private fun updatePosition(
         windowManager: WindowManager,
@@ -129,18 +142,9 @@ internal object OverlayController {
         (value * resources.displayMetrics.density + 0.5f).toInt()
 }
 
-internal class PreviewPillView(context: Context) : View(context) {
+internal class IslandPillView(context: Context) : View(context) {
     var onToggle: (() -> Unit)? = null
-    var expanded = false
-        set(value) {
-            field = value
-            contentDescription = if (value) {
-                "Demo Island expanded. Double tap to collapse."
-            } else {
-                "Demo Island compact. Double tap to expand."
-            }
-            invalidate()
-        }
+    private var snapshot = IslandStateEngine.snapshot
 
     private val body = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
     private val bounds = RectF()
@@ -157,11 +161,19 @@ internal class PreviewPillView(context: Context) : View(context) {
 
     init {
         isClickable = true
-        contentDescription = "Demo Island compact. Double tap to expand."
+        contentDescription = "Island activity"
         setOnLongClickListener {
-            OverlayController.stop()
+            IslandRuntime.changeOverlayEnabled(false)
             true
         }
+    }
+
+    fun render(value: IslandSnapshot) {
+        snapshot = value
+        val selected = value.selectedId?.let(value.sourcesById::get)
+        val state = if (value.presentation == IslandPresentation.EXPANDED) "expanded" else "compact"
+        contentDescription = "${selected?.title ?: "Island"}, $state. Double tap to change size. Long press to stop."
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -169,12 +181,27 @@ internal class PreviewPillView(context: Context) : View(context) {
         val radius = height / 2f
         bounds.set(0f, 0f, width.toFloat(), height.toFloat())
         canvas.drawRoundRect(bounds, radius, radius, body)
+        val expanded = snapshot.presentation == IslandPresentation.EXPANDED
+        val selected = snapshot.selectedId?.let(snapshot.sourcesById::get)
         val centerY = if (expanded) height * 0.36f else height / 2f
         canvas.drawCircle(context.dp(25).toFloat(), centerY, context.dp(5).toFloat(), accent)
         val textX = context.dp(42).toFloat()
-        canvas.drawText("ISLAND · DEMO", textX, centerY + title.textSize * 0.34f, title)
+        val titleText = if (!expanded && selected?.kind == IslandSourceKind.TIMER) {
+            "${selected.title} ${selected.detail?.substringBefore(' ').orEmpty()}"
+        } else {
+            selected?.title ?: "ISLAND"
+        }
+        val badgeReserve = if (!expanded && snapshot.visibleIds.size > 1) context.dp(45) else context.dp(16)
+        canvas.drawText(fitText(titleText, title, width - textX - badgeReserve), textX, centerY + title.textSize * 0.34f, title)
         if (expanded) {
-            canvas.drawText("Layout preview; no live signals", textX, height * 0.68f, detail)
+            canvas.drawText(
+                fitText(selected?.detail ?: "Activity in progress", detail, width - textX - context.dp(16)),
+                textX,
+                height * 0.68f,
+                detail,
+            )
+        } else if (snapshot.visibleIds.size > 1) {
+            canvas.drawText("+${snapshot.visibleIds.size - 1}", width - context.dp(28).toFloat(), centerY, detail)
         }
     }
 
@@ -186,4 +213,12 @@ internal class PreviewPillView(context: Context) : View(context) {
 
     private fun Context.dp(value: Int): Int =
         (value * resources.displayMetrics.density + 0.5f).toInt()
+
+    private fun fitText(value: String, paint: Paint, availablePixels: Float): String {
+        if (availablePixels <= 0f) return ""
+        if (paint.measureText(value) <= availablePixels) return value
+        var count = paint.breakText(value, true, availablePixels - paint.measureText("…"), null)
+        while (count > 0 && paint.measureText(value.substring(0, count) + "…") > availablePixels) count--
+        return if (count > 0) value.substring(0, count) + "…" else ""
+    }
 }
