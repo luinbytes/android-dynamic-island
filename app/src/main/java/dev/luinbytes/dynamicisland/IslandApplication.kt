@@ -30,7 +30,10 @@ internal object IslandRuntime {
     private const val KEY_OVERLAY = "overlay_enabled"
     private const val KEY_MEDIA = "media_enabled"
     private const val KEY_MEDIA_PACKAGES = "media_packages"
+    private const val KEY_CHARGING_SOURCE = "charging_source_enabled"
+    private const val KEY_TORCH_SOURCE = "torch_source_enabled"
     private const val TIMER_PUBLISHER = "dev.luinbytes.dynamicisland"
+    private const val SYSTEM_PUBLISHER = "android.system"
 
     private lateinit var appContext: Context
     private lateinit var timersRepository: AppTimerRepository
@@ -45,6 +48,14 @@ internal object IslandRuntime {
     private val mediaIds = HashMap<MediaSession.Token, String>()
     private val mediaRevisions = HashMap<String, Long>()
     private val mediaStarted = HashMap<String, Long>()
+    private var chargingSourceId: String? = null
+    private var chargingSourceRevision = 0L
+    private var chargingSourceStartedAt = 0L
+    private var chargingSourceTitle: String? = null
+    private var chargingSourceDetail: String? = null
+    private var torchSourceId: String? = null
+    private var torchSourceRevision = 0L
+    private var torchSourceStartedAt = 0L
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             screenInteractive = intent.action != Intent.ACTION_SCREEN_OFF
@@ -61,6 +72,10 @@ internal object IslandRuntime {
     var overlayEnabled by mutableStateOf(false)
         private set
     var mediaEnabled by mutableStateOf(false)
+        private set
+    var chargingSourceEnabled by mutableStateOf(false)
+        private set
+    var torchSourceEnabled by mutableStateOf(false)
         private set
     var listenerConnected by mutableStateOf(false)
         private set
@@ -81,6 +96,8 @@ internal object IslandRuntime {
             .getBoolean(KEY_OVERLAY, false)
         val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         mediaEnabled = prefs.getBoolean(KEY_MEDIA, false)
+        chargingSourceEnabled = prefs.getBoolean(KEY_CHARGING_SOURCE, false)
+        torchSourceEnabled = prefs.getBoolean(KEY_TORCH_SOURCE, false)
         allowedMediaPackages = prefs.getStringSet(KEY_MEDIA_PACKAGES, emptySet())?.toSet().orEmpty()
         screenInteractive = appContext.getSystemService(PowerManager::class.java).isInteractive
         appContext.registerReceiver(screenReceiver, IntentFilter().apply {
@@ -90,7 +107,10 @@ internal object IslandRuntime {
         })
         timersRepository = AppTimerRepository(appContext)
         timerSubscription = timersRepository.observe(::onTimersChanged)
-        deviceSignals = DeviceSignals(appContext) { signalSnapshot = it }
+        deviceSignals = DeviceSignals(appContext) {
+            signalSnapshot = it
+            reconcileDeviceSources(it)
+        }
         deviceSignals.start()
     }
 
@@ -172,6 +192,24 @@ internal object IslandRuntime {
             knownMediaPackages = emptySet()
             mediaAccess = MediaAccessState.STOPPED
         }
+    }
+
+    fun changeChargingSourceEnabled(enabled: Boolean) {
+        checkMainThread()
+        if (chargingSourceEnabled == enabled) return
+        chargingSourceEnabled = enabled
+        appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_CHARGING_SOURCE, enabled).apply()
+        reconcileChargingSource(signalSnapshot)
+    }
+
+    fun changeTorchSourceEnabled(enabled: Boolean) {
+        checkMainThread()
+        if (torchSourceEnabled == enabled) return
+        torchSourceEnabled = enabled
+        appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_TORCH_SOURCE, enabled).apply()
+        reconcileTorchSource(signalSnapshot)
     }
 
     fun setMediaPackageAllowed(packageName: String, allowed: Boolean) {
@@ -274,6 +312,121 @@ internal object IslandRuntime {
             )
         }
         syncOverlay()
+    }
+
+    private fun reconcileDeviceSources(snapshot: DeviceSignalSnapshot) {
+        checkMainThread()
+        reconcileChargingSource(snapshot)
+        reconcileTorchSource(snapshot)
+    }
+
+    private fun reconcileChargingSource(snapshot: DeviceSignalSnapshot) {
+        checkMainThread()
+        if (!chargingSourceEnabled || snapshot.charging != true) {
+            removeChargingSource()
+            return
+        }
+
+        val fullyCharged = snapshot.batteryFull == true
+        val title = if (fullyCharged) "Fully charged" else "Charging"
+        val detail = if (fullyCharged) {
+            snapshot.batteryPercent?.let { "Plugged in · $it%" } ?: "Plugged in"
+        } else {
+            snapshot.batteryPercent?.let { "$it% battery" } ?: "Power connected"
+        }
+        var id = chargingSourceId
+        if (id == null) {
+            id = "system:charging:${UUID.randomUUID()}"
+            chargingSourceId = id
+            chargingSourceStartedAt = SystemClock.elapsedRealtime()
+            chargingSourceRevision = 0L
+            chargingSourceTitle = null
+            chargingSourceDetail = null
+        }
+        if (chargingSourceTitle == title && chargingSourceDetail == detail) return
+
+        chargingSourceRevision = nextRevision(chargingSourceRevision)
+        chargingSourceTitle = title
+        chargingSourceDetail = detail
+        val now = SystemClock.elapsedRealtime()
+        IslandStateEngine.upsert(
+            IslandSource(
+                id = id,
+                kind = IslandSourceKind.SYSTEM,
+                lifecycle = IslandLifecycle.ACTIVE,
+                revision = chargingSourceRevision,
+                publisherId = SYSTEM_PUBLISHER,
+                startedAtMillis = chargingSourceStartedAt,
+                updatedAtMillis = now,
+                title = title,
+                detail = detail,
+            ),
+        )
+        syncOverlay()
+    }
+
+    private fun removeChargingSource() {
+        val id = chargingSourceId ?: return
+        chargingSourceRevision = nextRevision(chargingSourceRevision)
+        IslandStateEngine.remove(id, chargingSourceRevision)
+        IslandStateEngine.forgetTerminal(id)
+        chargingSourceId = null
+        chargingSourceRevision = 0L
+        chargingSourceStartedAt = 0L
+        chargingSourceTitle = null
+        chargingSourceDetail = null
+        syncOverlay()
+    }
+
+    private fun reconcileTorchSource(snapshot: DeviceSignalSnapshot) {
+        checkMainThread()
+        if (!torchSourceEnabled || snapshot.torchEnabled != true) {
+            removeTorchSource()
+            return
+        }
+        if (torchSourceId != null) return
+
+        val id = "system:torch:${UUID.randomUUID()}"
+        torchSourceId = id
+        torchSourceStartedAt = SystemClock.elapsedRealtime()
+        torchSourceRevision = nextRevision(torchSourceRevision)
+        val now = SystemClock.elapsedRealtime()
+        IslandStateEngine.upsert(
+            IslandSource(
+                id = id,
+                kind = IslandSourceKind.SYSTEM,
+                lifecycle = IslandLifecycle.ACTIVE,
+                revision = torchSourceRevision,
+                publisherId = SYSTEM_PUBLISHER,
+                startedAtMillis = torchSourceStartedAt,
+                updatedAtMillis = now,
+                title = "Flashlight",
+                detail = "On",
+            ),
+        )
+        syncOverlay()
+    }
+
+    private fun removeTorchSource() {
+        val id = torchSourceId ?: return
+        torchSourceRevision = nextRevision(torchSourceRevision)
+        IslandStateEngine.remove(id, torchSourceRevision)
+        IslandStateEngine.forgetTerminal(id)
+        torchSourceId = null
+        torchSourceRevision = 0L
+        torchSourceStartedAt = 0L
+        syncOverlay()
+    }
+
+    private fun nextRevision(current: Long): Long {
+        check(current < Long.MAX_VALUE) { "System source revision exhausted" }
+        return current + 1L
+    }
+
+    private fun checkMainThread() {
+        check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            "Island sources must be changed on the main thread"
+        }
     }
 
     private fun clearMediaSources(terminal: Boolean) {

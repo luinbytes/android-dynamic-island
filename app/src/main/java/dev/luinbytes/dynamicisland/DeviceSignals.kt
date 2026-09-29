@@ -15,6 +15,7 @@ import android.os.Looper
 internal data class DeviceSignalSnapshot(
     val batteryPercent: Int? = null,
     val charging: Boolean? = null,
+    val batteryFull: Boolean? = null,
     val ringerMode: Int? = null,
     val torchAvailable: Boolean? = null,
     val torchEnabled: Boolean? = null,
@@ -126,7 +127,14 @@ internal class DeviceSignals(
             BatteryManager.BATTERY_STATUS_DISCHARGING, BatteryManager.BATTERY_STATUS_NOT_CHARGING -> false
             else -> null
         }
-        publish(current.copy(batteryPercent = percent, charging = charging))
+        val full = when (status) {
+            BatteryManager.BATTERY_STATUS_FULL -> true
+            BatteryManager.BATTERY_STATUS_CHARGING,
+            BatteryManager.BATTERY_STATUS_DISCHARGING,
+            BatteryManager.BATTERY_STATUS_NOT_CHARGING -> false
+            else -> null
+        }
+        publish(current.copy(batteryPercent = percent, charging = charging, batteryFull = full))
     }
 
     private fun updateRinger() {

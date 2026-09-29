@@ -79,6 +79,8 @@ class MainActivity : ComponentActivity() {
                         openedTimer = IslandRuntime.timerSnapshots.firstOrNull { it.id == openedTimerId },
                         alarmState = IslandRuntime.alarmState,
                         signals = IslandRuntime.signalSnapshot,
+                        chargingSourceEnabled = IslandRuntime.chargingSourceEnabled,
+                        torchSourceEnabled = IslandRuntime.torchSourceEnabled,
                         island = IslandStateEngine.snapshot,
                         mediaEnabled = IslandRuntime.mediaEnabled,
                         listenerGranted = listenerGranted,
@@ -119,6 +121,8 @@ class MainActivity : ComponentActivity() {
                                 message = "Playback command is no longer available."
                             }
                         },
+                        onChargingSourceEnabled = IslandRuntime::changeChargingSourceEnabled,
+                        onTorchSourceEnabled = IslandRuntime::changeTorchSourceEnabled,
                     )
                 }
             }
@@ -215,6 +219,8 @@ private fun PrototypeScreen(
     openedTimer: TimerSnapshot?,
     alarmState: AlarmState?,
     signals: DeviceSignalSnapshot,
+    chargingSourceEnabled: Boolean,
+    torchSourceEnabled: Boolean,
     island: IslandSnapshot,
     mediaEnabled: Boolean,
     listenerGranted: Boolean,
@@ -239,6 +245,8 @@ private fun PrototypeScreen(
     onOpenListenerSettings: () -> Unit,
     onAllowMediaPackage: (String, Boolean) -> Unit,
     onMediaAction: (MediaSession.Token, MediaTransportAction) -> Unit,
+    onChargingSourceEnabled: (Boolean) -> Unit,
+    onTorchSourceEnabled: (Boolean) -> Unit,
 ) {
     var customMinutes by rememberSaveable { mutableStateOf("") }
     var customLabel by rememberSaveable { mutableStateOf("") }
@@ -441,10 +449,20 @@ private fun PrototypeScreen(
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Device signals", style = MaterialTheme.typography.titleMedium)
-                Text("Battery: ${signals.batteryPercent?.let { "$it%" } ?: "unavailable"}${if (signals.charging == true) " · charging" else ""}")
+                Text("Battery: ${signals.batteryPercent?.let { "$it%" } ?: "unavailable"}${when {
+                    signals.batteryFull == true -> " · full"
+                    signals.charging == true -> " · charging"
+                    else -> ""
+                }}")
                 Text("Ringer: ${when (signals.ringerMode) { 0 -> "silent"; 1 -> "vibrate"; 2 -> "normal"; else -> "unavailable" }}")
                 Text("Torch: ${when (signals.torchEnabled) { true -> "on"; false -> "off"; null -> if (signals.torchAvailable == false) "unavailable" else "unknown" }}")
-                Text("These facts do not automatically become activities.", style = MaterialTheme.typography.bodySmall)
+                Text("Show a source only while its direct device signal is active. These switches observe status; they do not control charging or the torch.", style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = { onChargingSourceEnabled(!chargingSourceEnabled) }) {
+                    Text(if (chargingSourceEnabled) "Hide charging activity" else "Show charging activity")
+                }
+                OutlinedButton(onClick = { onTorchSourceEnabled(!torchSourceEnabled) }) {
+                    Text(if (torchSourceEnabled) "Hide torch activity" else "Show torch activity")
+                }
             }
         }
 

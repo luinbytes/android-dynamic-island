@@ -81,12 +81,13 @@ internal data class IslandSnapshot(
  * on another thread must post its immutable event to the main thread before calling this object.
  * Source payloads are never written to disk. Unavailable and terminal records have display text
  * scrubbed immediately. A terminal ID remains tombstoned for this process lifetime so delayed
- * callbacks cannot revive it; a new activity/session must have a new stable ID.
+ * callbacks cannot revive it; a new activity/session must have a new stable ID. Direct synchronous
+ * sources with no delayed callbacks may explicitly discard their terminal record.
  */
 internal object IslandStateEngine {
-    const val POLICY_VERSION: String = "android-approx-v1"
+    const val POLICY_VERSION: String = "android-approx-v2"
     const val POLICY_LABEL: String =
-        "publisher ID grouping, same-publisher relevance then earliest start, then update time; user selection retained"
+        "active tasks before direct device status, then publisher grouping and start time; user selection retained"
 
     private const val MAX_VISIBLE_SOURCES = 3
 
@@ -170,6 +171,18 @@ internal object IslandStateEngine {
      */
     fun remove(id: String, revision: Long): Boolean = transition(id, revision, IslandLifecycle.ENDED)
 
+    /** Discards a terminal direct source only when its owner has no delayed callbacks for this ID. */
+    fun forgetTerminal(id: String): Boolean {
+        checkMainThread()
+        if (id !in terminalIds || sourceRecords[id]?.kind != IslandSourceKind.SYSTEM || !id.startsWith("system:")) {
+            return false
+        }
+        terminalIds.remove(id)
+        sourceRecords.remove(id)
+        publish()
+        return true
+    }
+
     /** Selects a currently eligible source manually, or restores automatic selection with null. */
     fun select(id: String?): Boolean {
         checkMainThread()
@@ -221,7 +234,7 @@ internal object IslandStateEngine {
     private fun publish() {
         val eligible = orderedEligibleSources()
         val retainedSelection = selectedSourceId?.takeIf { id -> eligible.any { it.id == id } }
-        if (retainedSelection == null) {
+        if (selectionOrigin == IslandSelectionOrigin.AUTOMATIC || retainedSelection == null) {
             selectedSourceId = eligible.firstOrNull()?.id
             selectionOrigin = IslandSelectionOrigin.AUTOMATIC
         }
@@ -257,15 +270,16 @@ internal object IslandStateEngine {
     }
 
     /**
-     * Versioned approximation: stable publisher grouping avoids claiming cross-publisher priority;
-     * optional relevance affects order only within one publisher, then earliest start/update time/ID
-     * break ties. Publisher grouping itself is only a deterministic Android prototype policy.
+     * Versioned approximation: direct device status sits behind actionable tasks. Within each
+     * tier, stable publisher grouping and optional same-publisher relevance determine order,
+     * followed by earliest start, update time and ID. This does not claim iOS priority parity.
      */
     private fun orderedEligibleSources(): List<IslandSource> = sourceRecords.values
         .asSequence()
         .filter { it.lifecycle.isEligible() }
         .sortedWith(
-            compareBy<IslandSource> { it.publisherId }
+            compareBy<IslandSource> { if (it.kind == IslandSourceKind.SYSTEM) 1 else 0 }
+                .thenBy { it.publisherId }
                 .thenComparator { left, right ->
                     if (left.publisherId == right.publisherId) compareRelevance(left.relevanceScore, right.relevanceScore) else 0
                 }
