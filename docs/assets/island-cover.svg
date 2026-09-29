@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">Island for Android</title>
+  <desc id="desc">A compact timer pill expands into a card with timer controls.</desc>
+  <rect width="1200" height="360" rx="28" fill="#10171b"/>
+  <path d="M0 292C187 246 280 349 471 303S802 270 1200 308V360H0Z" fill="#162126"/>
+  <text x="68" y="121" fill="#62dacf" font-family="Arial,Helvetica,sans-serif" font-size="22" font-weight="700" letter-spacing="5">ISLAND</text>
+  <text x="68" y="181" fill="#f7faf9" font-family="Arial,Helvetica,sans-serif" font-size="45" font-weight="700">Your active moments,</text>
+  <text x="68" y="239" fill="#f7faf9" font-family="Arial,Helvetica,sans-serif" font-size="45" font-weight="700">close at hand.</text>
+  <text x="68" y="295" fill="#b4c2c1" font-family="Arial,Helvetica,sans-serif" font-size="20">An Android public-API preview</text>
+  <rect x="704" y="52" width="430" height="82" rx="41" fill="#000"/>
+  <circle cx="746" cy="93" r="10" fill="#62dacf"/>
+  <text x="775" y="103" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700">Coffee timer 04:32</text>
+  <rect x="662" y="162" width="472" height="151" rx="52" fill="#000"/>
+  <circle cx="703" cy="210" r="9" fill="#62dacf"/>
+  <text x="731" y="220" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="26" font-weight="700">Coffee timer</text>
+  <text x="731" y="252" fill="#b4c2c1" font-family="Arial,Helvetica,sans-serif" font-size="17">04:32 remaining</text>
+  <rect x="688" y="269" width="260" height="34" rx="17" fill="#253035" stroke="#465d5e"/>
+  <rect x="962" y="269" width="146" height="34" rx="17" fill="#253035" stroke="#465d5e"/>
+  <text x="818" y="292" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="17" text-anchor="middle">Pause</text>
+  <text x="1035" y="292" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="17" text-anchor="middle">Clear</text>
+</svg>
