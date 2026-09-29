@@ -57,7 +57,7 @@ The APK is `app/build/outputs/apk/debug/app-debug.apk`. Install it with `adb ins
 ### Implementation and evidence
 
 - [Reference specification](REFERENCE_SPEC.md), [implementation sequence](docs/verification/09-implementation-acceptance.md), [Android architecture gate](docs/android/05-android-architecture.md)
-- [Samsung prototype evidence](docs/verification/13-samsung-prototype-evidence.md), [device qualification](docs/android/18-device-qualification.md), [paired comparison protocol](docs/verification/12-comparison-protocol.md)
+- [Samsung prototype evidence](docs/verification/13-samsung-prototype-evidence.md), [Samsung Clock admission probe](docs/verification/14-samsung-clock-admission.md), [device qualification](docs/android/18-device-qualification.md), [paired comparison protocol](docs/verification/12-comparison-protocol.md)
 - [Agent workspace](agents/README.md) for agent-specific handoffs and working notes
 
 The APK keeps source identity and presentation separate. App-owned timers use monotonic deadlines, per-timer AlarmManager broadcasts and opt-in notifications. Media is keyed by the exact active session token; actions are rechecked before dispatch. A listener callback alone never admits a third-party notification as an activity. Source behavior and UI parity remain subject to the linked physical-device and reference gates.
